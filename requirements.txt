@@ -1,0 +1,22 @@
+# Astro Runtime includes the following pre-installed provider packages: 
+# https://www.astronomer.io/docs/astro/runtime-image-architecture#provider-packages
+
+# Core data processing
+pandas>=2.0.0
+duckdb>=0.9.0
+
+# dbt for transformations (when dbt project is added)
+# dbt-core>=1.6.0
+# dbt-duckdb>=1.6.0
+
+# Additional data quality and monitoring
+# great-expectations>=0.18.0  # For advanced data quality checks
+# sqlalchemy>=2.0.0           # For database connections if needed
+
+# Development and testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Optional: For enhanced CSV processing
+# chardet>=5.0.0              # Character encoding detection
+# python-dateutil>=2.8.0      # Enhanced date parsing
