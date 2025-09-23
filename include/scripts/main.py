@@ -51,9 +51,9 @@ def main():
         print_header()    
         
         # Initialize the data processor
-        processor = VoteDataProcessor()
+        processor = VoteDataProcessor(target="dev")
         
-        # Run the ETL pipeline
+        # Run the ETL pipelines
         print("📥 Starting Extract, Validate, and Load process...")
         result = processor.run_pipeline()
         

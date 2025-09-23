@@ -209,5 +209,5 @@ __marimo__/
 # data
 *.duckdb
 *.csv
-.last_run_timestamp
+.last_run_timestamp_*
 .vscode/

@@ -21,11 +21,12 @@ import hashlib
 class VoteDataProcessor:
     """Main class for processing voter data from CSV to DuckDB"""
     
-    def __init__(self, db_path: str = "include/data/goodparty.duckdb"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "include/data/", target: str = "dev"):
+        self.target = target
+        self.db_path = Path(f"{db_path}goodparty_{target if target else "dev"}.duckdb")
         self.raw_data_path = Path("include/data/raw")
         self.connection = None
-        self.last_run_file = Path("include/data/.last_run_timestamp")
+        self.last_run_file = Path(f"include/data/.last_run_timestamp_{target}")
         
         # CSV schema mapping
         self.csv_schema = {
@@ -262,6 +263,7 @@ class VoteDataProcessor:
             os.makedirs(os.path.dirname(self.last_run_file), exist_ok=True)
             with open(self.last_run_file, 'w') as f:
                 f.write(timestamp.isoformat())
+                print(f'Wrote to: {self.last_run_file}')
                 
         except Exception as e:
             print(f"⚠️  Could not update last run timestamp: {e}")
@@ -619,7 +621,7 @@ class VoteDataProcessor:
             print(f"⚠️  Error getting data quality metrics: {e}")
             return {'voter_count': 0, 'state_count': 0}
 
-    def run_pipeline(self, truncate_mode: bool = False) -> Dict:
+    def run_pipeline(self, target: Optional[str] = "dev", truncate_mode: bool = False, ) -> Dict:
         """Run the complete ETL pipeline"""
         start_time = datetime.now()
         

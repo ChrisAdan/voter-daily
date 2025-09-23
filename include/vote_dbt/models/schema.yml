@@ -1,0 +1,1392 @@
+# models/schema.yml
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Raw ingestion schema containing unmodeled data loaded directly from
+      CSV files into DuckDB. This is the landing zone before cleaning,
+      transformation, or deduplication.
+    tables:
+      - name: vote_records
+        description: >
+          Raw voter records extracted from CSV files. Each row represents a
+          record of an individual voter as provided by external sources.
+        columns:
+          - name: record_uuid
+            description: Unique record identifier (UUID, primary key).
+            data_type: string
+          - name: source_id
+            description: Original ID from the source file.
+            data_type: string
+          - name: first_name
+            description: Voter's first name.
+            data_type: string
+          - name: last_name
+            description: Voter's last name.
+            data_type: string
+          - name: age
+            description: Age of the voter.
+            data_type: integer
+          - name: gender
+            description: Gender of the voter.
+            data_type: string
+          - name: state
+            description: Two-letter state code where the voter is registered.
+            data_type: string
+          - name: party
+            description: Declared political party affiliation.
+            data_type: string
+          - name: email
+            description: Voter's email address.
+            data_type: string
+          - name: registered_date
+            description: Date the voter registered.
+            data_type: date
+          - name: last_voted_date
+            description: Date the voter last voted.
+            data_type: date
+          - name: source_file
+            description: Name of the source file the record was loaded from.
+            data_type: string
+          - name: record_hash
+            description: MD5 hash of key identifying fields (used for deduplication).
+            data_type: string
+          - name: inserted_at
+            description: Timestamp when the record was inserted into raw schema.
+            data_type: timestamp
+          - name: updated_at
+            description: Timestamp when the record was last updated.
+            data_type: timestamp
+
+models:
+  - name: stage_voter_metrics
+    description: >
+      Voter-level staging table with demographic segmentation and engagement metrics.
+      Incrementally maintained from dim_voter with enriched analytics fields for
+      downstream mart consumption. Serves as the foundation for all aggregated 
+      voter analytics and targeting models.
+    config:
+      materialized: incremental
+      unique_key: voter_id
+    contract:
+      enforced: true
+    tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          arguments:
+            min_value: 1
+            max_value: 10000000
+      - dbt_expectations.expect_table_columns_to_match_ordered_list:
+          arguments:
+            column_list:
+              [
+                "voter_id",
+                "age_group",
+                "gender",
+                "state",
+                "party",
+                "registered_date",
+                "days_since_registered",
+                "years_since_registered",
+                "last_voted_date",
+                "elections_since_last_vote",
+                "voter_engagement_segment",
+                "last_vote_cycle_type",
+                "last_processed_date",
+              ]
+    columns:
+      - name: voter_id
+        description: Unique identifier of the voter (from source_id in dim_voter).
+        data_type: string
+        constraints:
+          - type: not_null
+          - type: unique
+        tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[A-Za-z0-9_-]+$"
+
+      - name: age_group
+        description: >
+          Age bracket grouping based on standard political demographic analysis: 
+          18-29 (Gen Z/Young Millennials), 30-49 (Millennials/Gen X), 
+          50-64 (Gen X/Boomers), 65+ (Boomers/Silent Generation).
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["18-29", "30-49", "50-64", "65+"]
+
+      - name: gender
+        description: >
+          Gender of the voter. Currently restricted to 'M' or 'F' in source
+          data; this should be revisited to support more inclusive categories
+          as data sources evolve.
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["M", "F"]
+
+      - name: state
+        description: >
+          Two-letter state abbreviation where voter is registered. Should align
+          with official USPS state codes for geographic analysis accuracy.
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_equal:
+              arguments:
+                value: 2
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[A-Z]{2}$"
+
+      - name: party
+        description: >
+          Declared political party affiliation. Limited to three major categories
+          for analytical simplicity. Independent includes unaffiliated, third-party,
+          and other non-major party registrations.
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Democrat", "Republican", "Independent"]
+
+      - name: registered_date
+        description: >
+          Date the voter first registered. Used to compute registration tenure
+          and eligibility for historical elections. Critical for trend analysis.
+        data_type: date
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: "date '1900-01-01'"
+                max_value: "date '{{ run_started_at.strftime('%Y-%m-%d') }}'"
+
+      - name: days_since_registered
+        description: >
+          Number of calendar days between registered_date and current analysis date.
+          Used for tenure-based voter engagement analysis and lifecycle modeling.
+        data_type: integer
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 50000
+
+      - name: years_since_registered
+        description: >
+          Number of years since registration, calculated as integer years.
+          Primary metric for registration tenure analysis and voter lifecycle stages.
+        data_type: integer
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 100
+
+      - name: last_voted_date
+        description: >
+          Date of most recent election participation. Can be null for voters
+          who registered but never voted. Foundation for engagement segmentation.
+        data_type: date
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: "date '1900-01-01'"
+                max_value: "date '{{ run_started_at.strftime('%Y-%m-%d') }}'"
+                row_condition: "last_voted_date is not null"
+
+      - name: elections_since_last_vote
+        description: >
+          Count of federal elections since voter's last recorded participation.
+          Calculated via simple_elections_since_last_vote macro using hardcoded
+          federal election calendar. Null indicates never voted.
+        data_type: integer
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 20
+                row_condition: "elections_since_last_vote is not null"
+
+      - name: voter_engagement_segment
+        description: >
+          Behavioral segmentation based on recent election participation patterns.
+          Current Voter (0 missed), Missed Last Election (1 missed), 
+          Occasional Voter (2-3 missed), Infrequent Voter (4-6 missed),
+          Dormant Voter (7+ missed), Never Voted (null last_voted_date).
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  [
+                    "Current Voter",
+                    "Missed Last Election",
+                    "Occasional Voter",
+                    "Infrequent Voter",
+                    "Dormant Voter",
+                    "Never Voted",
+                  ]
+
+      - name: last_vote_cycle_type
+        description: >
+          Classification of the election year when voter last participated.
+          Presidential (divisible by 4), Midterm (even, not divisible by 4),
+          Off-Year/Primary (odd years or other). Used for participation pattern analysis.
+        data_type: string
+        tests:
+          - accepted_values:
+              arguments:
+                values:
+                  ["Presidential Year", "Midterm Year", "Off-Year/Primary"]
+              config:
+                where: "last_vote_cycle_type is not null"
+
+      - name: last_processed_date
+        description: >
+          Timestamp when record was last processed for incremental updates.
+          Used internally for incremental processing logic and audit trails.
+        data_type: timestamp with time zone
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+
+  - name: dim_voter
+    description: >
+      Core dimension table of cleaned, deduplicated voter records from raw sources.
+      Serves as the authoritative source for voter demographics and registration
+      history. Includes data quality filters and standardization logic.
+    contract:
+      enforced: true
+    tests:
+      - dbt_expectations.expect_column_pair_values_A_to_be_greater_than_B:
+          arguments:
+            column_A: last_voted_date
+            column_B: registered_date
+            or_equal: true
+            row_condition: "last_voted_date is not null"
+    columns:
+      - name: source_id
+        description: >
+          Original unique identifier from source system. Serves as primary key
+          and links back to raw data for audit trails and data lineage tracking.
+        data_type: string
+        constraints:
+          - type: not_null
+          - type: primary_key
+        tests:
+          - not_null
+          - unique
+
+      - name: first_name
+        description: >
+          Voter's first name as provided in source data. Not standardized or
+          normalized - future enhancement could include name matching algorithms
+          for duplicate detection across sources.
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_be_between:
+              arguments:
+                min_value: 1
+                max_value: 100
+
+      - name: last_name
+        description: >
+          Voter's last name as provided in source data. Critical for identity
+          matching and potential household-level analysis in future iterations.
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_be_between:
+              arguments:
+                min_value: 1
+                max_value: 100
+
+      - name: age
+        description: >
+          Current age in years. Used for demographic analysis and age group
+          segmentation. Should be periodically refreshed as voters age.
+        data_type: integer
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 18
+                max_value: 120
+
+      - name: gender
+        description: >
+          Self-reported gender identity. Currently constrained to binary options
+          due to source data limitations. Recommend expanding to include
+          non-binary and other gender identities as data allows.
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["M", "F"]
+
+      - name: state
+        description: >
+          Two-letter state abbreviation of voter registration jurisdiction.
+          Validated for length and format. Foundation for geographic analysis
+          and state-level campaign targeting.
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_equal:
+              arguments:
+                value: 2
+
+      - name: party
+        description: >
+          Political party affiliation as declared at registration. Simplified
+          to three major categories for analytical purposes. Independent
+          category aggregates all non-major party affiliations.
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Democrat", "Republican", "Independent"]
+
+      - name: email
+        description: >
+          Contact email address, normalized to lowercase. Basic validation
+          ensures @ symbol presence. Not guaranteed deliverable - would benefit
+          from email verification service integration.
+        data_type: string
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+
+      - name: registered_date
+        description: >
+          Date of initial voter registration. Fundamental for tenure analysis,
+          eligibility calculations, and tracking new voter registration trends
+          over time.
+        data_type: date
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: "date '1900-01-01'"
+                max_value: "date '{{ run_started_at.strftime('%Y-%m-%d') }}'"
+
+      - name: last_voted_date
+        description: >
+          Most recent election participation date. Null indicates voter has
+          never participated since registration. Core input for engagement
+          analysis and voter lifecycle modeling.
+        data_type: date
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: "date '1900-01-01'"
+                max_value: "date '{{ run_started_at.strftime('%Y-%m-%d') }}'"
+                row_condition: "last_voted_date is not null"
+
+      - name: inserted_date
+        description: >
+          Audit timestamp tracking when record was first created in dimension
+          table. Used for data lineage, debugging, and incremental processing logic.
+        data_type: date
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+
+      - name: last_modified_date
+        description: >
+          Audit timestamp of most recent record update. Supports slowly changing
+          dimension logic and helps identify data freshness issues.
+        data_type: date
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+
+  # MART LAYER - Analytics-ready aggregated tables for dashboards and analysis
+  - name: voter_snapshot
+    description: >
+      Current-state aggregated snapshot of voter demographics and engagement metrics.
+      Provides comprehensive cross-tabulations by state, age group, gender, and party
+      with engagement distribution and targeting opportunity calculations. Optimized
+      for dashboard consumption and executive reporting.
+    contract:
+      enforced: true
+    columns:
+      - name: state
+        description: Two-letter state code for geographic dimension.
+        data_type: varchar(2)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_equal:
+              arguments:
+                value: 2
+
+      - name: age_group
+        description: Standardized age bracket for demographic analysis.
+        data_type: varchar(10)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["18-29", "30-49", "50-64", "65+"]
+
+      - name: gender
+        description: Gender demographic dimension.
+        data_type: varchar(1)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["M", "F"]
+
+      - name: party
+        description: Political party affiliation dimension.
+        data_type: varchar(12)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Democrat", "Republican", "Independent"]
+
+      - name: voter_engagement_segment
+        description: Behavioral segmentation based on recent election participation patterns.
+        data_type: varchar(20)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  [
+                    "Current Voter",
+                    "Missed Last Election",
+                    "Occasional Voter",
+                    "Infrequent Voter",
+                    "Dormant Voter",
+                    "Never Voted",
+                  ]
+
+      - name: last_vote_cycle_type
+        description: Type of election cycle when voter last participated.
+        data_type: varchar(18)
+        tests:
+          - accepted_values:
+              arguments:
+                values:
+                  ["Presidential Year", "Midterm Year", "Off-Year/Primary"]
+              config:
+                where: "last_vote_cycle_type is not null"
+
+      - name: total_voters
+        description: Count of registered voters in this demographic segment.
+        data_type: bigint
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 1
+                max_value: 1000000
+
+      - name: avg_years_registered
+        description: Average number of years since registration for this segment.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: median_years_registered
+        description: Median number of years since registration for this segment.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: avg_elections_missed
+        description: Average number of elections missed by voters in this segment.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 20.0
+
+      - name: current_voters
+        description: Count of voters who participated in most recent election.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: missed_last_voters
+        description: Count of voters who missed only the last election.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: occasional_voters
+        description: Count of voters who missed 2-3 recent elections.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: infrequent_voters
+        description: Count of voters who missed 4-6 recent elections.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: dormant_voters
+        description: Count of voters who missed 7+ recent elections.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: never_voted
+        description: Count of voters who have never participated since registration.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: targetable_voters
+        description: Count of voters with 2+ missed elections (prime re-engagement targets).
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: high_opportunity_voters
+        description: Count of voters with 4+ missed elections (high-opportunity targets).
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: pct_current_voters
+        description: Percentage of segment that participated in most recent election.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_targetable_voters
+        description: Percentage of segment with 2+ missed elections (prime targets).
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_high_opportunity_voters
+        description: Percentage of segment with 4+ missed elections (high-opportunity targets).
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_missed_last_voters
+        description: Percentage of segment that missed only the last election.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_occasional_voters
+        description: Percentage of segment classified as occasional voters (2-3 missed).
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_infrequent_voters
+        description: Percentage of segment classified as infrequent voters (4-6 missed).
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_dormant_voters
+        description: Percentage of segment classified as dormant voters (7+ missed).
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_never_voted
+        description: Percentage of segment that has never participated since registration.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: snapshot_date
+        description: Date when snapshot was generated for temporal tracking.
+        data_type: date
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+
+  - name: partisan_trends
+    description: >
+      Time series analysis of partisan composition and voter participation across
+      federal election cycles from 2008-2024. Tracks eligible voters, estimated
+      participation rates, and demographic shifts over time by election type
+      (Presidential vs Midterm). Supports trend analysis and electoral forecasting.
+    contract:
+      enforced: true
+    tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          arguments:
+            min_value: 1
+            max_value: 100000
+    columns:
+      - name: election_year
+        description: Year of the federal election (2008, 2010, 2012, etc.).
+        data_type: integer
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 2008
+                max_value: 2030
+
+      - name: election_type
+        description: Type of federal election (Presidential or Midterm).
+        data_type: varchar(12)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Presidential", "Midterm"]
+
+      - name: election_date
+        description: Specific date of the federal election.
+        data_type: date
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+
+      - name: state
+        description: Two-letter state code for geographic dimension.
+        data_type: varchar(2)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_equal:
+              arguments:
+                value: 2
+
+      - name: age_group
+        description: Standardized age bracket for demographic analysis.
+        data_type: varchar(10)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["18-29", "30-49", "50-64", "65+"]
+
+      - name: gender
+        description: Gender demographic dimension.
+        data_type: varchar(1)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["M", "F"]
+
+      - name: party
+        description: Political party affiliation dimension.
+        data_type: varchar(12)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Democrat", "Republican", "Independent"]
+
+      - name: eligible_voters
+        description: Count of voters registered and eligible for this election.
+        data_type: bigint
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+
+      - name: estimated_voters
+        description: Estimated count of voters who likely participated in this election.
+        data_type: bigint
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+
+      - name: participation_rate
+        description: Estimated participation rate for this demographic segment.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_of_eligible_by_demo
+        description: >
+          Percentage that this party represents of all eligible voters within
+          the same demographic group (state/age/gender) for this election.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_of_voters_by_demo
+        description: >
+          Percentage that this party represents of all estimated voters within
+          the same demographic group (state/age/gender) for this election.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: prev_eligible_voters
+        description: >
+          Count of eligible voters for this demographic segment in the previous
+          election of the same type (Presidential or Midterm).
+        data_type: bigint
+
+      - name: prev_participation_rate
+        description: >
+          Participation rate for this demographic segment in the previous
+          election of the same type (Presidential or Midterm).
+        data_type: double
+
+      - name: eligible_voter_change_pct
+        description: >
+          Percentage change in eligible voters compared to previous election
+          of the same type. Positive values indicate growth.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: -100.0
+                max_value: 1000.0
+                row_condition: "eligible_voter_change_pct is not null"
+
+      - name: participation_rate_change_pts
+        description: >
+          Change in participation rate (percentage points) compared to previous
+          election of the same type. Positive values indicate increased participation.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: -100.0
+                max_value: 100.0
+                row_condition: "participation_rate_change_pts is not null"
+
+  - name: targeting_opportunities
+    description: >
+      Ranked demographic segments with highest voter re-engagement potential based
+      on composite opportunity scoring. Identifies state/age/gender/party combinations
+      with optimal mix of recent lapsers, registration tenure, and segment size.
+      Includes prioritized targeting tiers for campaign resource allocation.
+    contract:
+      enforced: true
+
+    columns:
+      - name: state
+        description: Two-letter state code for geographic dimension.
+        data_type: varchar(2)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_equal:
+              arguments:
+                value: 2
+
+      - name: age_group
+        description: Standardized age bracket for demographic analysis.
+        data_type: varchar(10)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["18-29", "30-49", "50-64", "65+"]
+
+      - name: gender
+        description: Gender demographic dimension.
+        data_type: varchar(1)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["M", "F"]
+
+      - name: party
+        description: Political party affiliation dimension.
+        data_type: varchar(12)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Democrat", "Republican", "Independent"]
+
+      - name: targeting_tier
+        description: Prioritization category for campaign resource allocation.
+        data_type: varchar(15)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  [
+                    "High Priority",
+                    "Medium Priority",
+                    "Low Priority",
+                    "Monitor Only",
+                  ]
+
+      - name: opportunity_score
+        description: >
+          Composite score (0-100) ranking re-engagement potential. Weighted combination
+          of recent lapsers (40%), medium lapsers (30%), tenure (20%), size (10%).
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: state_rank
+        description: Ranking within state by opportunity score (1 = highest).
+        data_type: integer
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 1
+                max_value: 1000
+
+      - name: national_rank
+        description: Overall national ranking by opportunity score (1 = highest).
+        data_type: integer
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 1
+                max_value: 10000
+
+      - name: total_voters
+        description: Total count of registered voters in this demographic segment.
+        data_type: bigint
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 1
+                max_value: 1000000
+
+      - name: prime_target_voters
+        description: Count of voters who missed 1-3 elections (highest re-engagement potential).
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: broad_target_voters
+        description: Count of voters who missed 2-6 elections (broader targeting pool).
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: active_voters
+        description: Count of voters who participated in the most recent election.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: lapsed_1_election
+        description: Count of voters who missed exactly 1 recent election.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: lapsed_2_3_elections
+        description: Count of voters who missed 2-3 recent elections.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: lapsed_4_6_elections
+        description: Count of voters who missed 4-6 recent elections.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: dormant_voters
+        description: Count of voters who missed 7+ recent elections.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: never_voted
+        description: Count of voters who have never participated since registration.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: pct_prime_targets
+        description: Percentage of segment classified as prime targets (1-3 elections missed).
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_broad_targets
+        description: Percentage of segment classified as broad targets (2-6 elections missed).
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_active_voters
+        description: Percentage of segment that participated in most recent election.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_recently_lapsed
+        description: Percentage of segment that missed exactly 1 recent election.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_medium_lapsed
+        description: Percentage of segment that missed 2-6 recent elections.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_dormant
+        description: Percentage of segment classified as dormant (7+ elections missed).
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_never_voted
+        description: Percentage of segment that has never participated since registration.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: avg_elections_missed
+        description: Average number of elections missed by voters in this segment.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 20.0
+
+      - name: avg_registration_tenure
+        description: Average number of years since registration for this segment.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: analysis_date
+        description: Date when the targeting analysis was performed.
+        data_type: date
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+
+  - name: state_summary
+    description: >
+      Executive-level state summaries with party composition, demographic breakdowns,
+      voter engagement metrics, and competitive analysis. Includes engagement
+      opportunity scoring and partisan lean classification for strategic geographic
+      planning and resource allocation decisions.
+    contract:
+      enforced: true
+    tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          arguments:
+            min_value: 1
+            max_value: 60 # 50 states + territories
+    columns:
+      - name: state
+        description: Two-letter state abbreviation.
+        data_type: varchar(2)
+        constraints:
+          - type: not_null
+          - type: unique
+        tests:
+          - not_null
+          - unique
+
+      - name: total_registered_voters
+        description: Total count of registered voters in state.
+        data_type: bigint
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+
+      - name: pct_democrat
+        description: Percentage of registered voters affiliated with Democratic Party.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_republican
+        description: Percentage of registered voters affiliated with Republican Party.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_independent
+        description: Percentage of registered voters with Independent/other affiliation.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_18_29
+        description: Percentage of registered voters aged 18-29.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_30_49
+        description: Percentage of registered voters aged 30-49.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_50_64
+        description: Percentage of registered voters aged 50-64.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_65_plus
+        description: Percentage of registered voters aged 65 and older.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_female
+        description: Percentage of registered voters who are female.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_male
+        description: Percentage of registered voters who are male.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_current_voters
+        description: Percentage of registered voters who participated in the most recent election.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_recoverable_voters
+        description: >
+          Percentage of voters classified as "recoverable" (Missed Last Election or Occasional Voter).
+          Prime candidates for re-engagement campaigns.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_disengaged_voters
+        description: >
+          Percentage of voters classified as disengaged (Infrequent or Dormant Voter).
+          Require more intensive re-engagement efforts.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: pct_never_voted
+        description: Percentage of registered voters who have never participated in an election.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: avg_elections_missed
+        description: Average number of federal elections missed per registered voter in state.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 20.0
+
+      - name: avg_years_registered
+        description: Average number of years voters have been registered in the state.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: median_years_registered
+        description: Median number of years voters have been registered in the state.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: democrat_voters
+        description: Absolute count of Democratic voters in state.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: republican_voters
+        description: Absolute count of Republican voters in state.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: independent_voters
+        description: Absolute count of Independent/other voters in state.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: current_voters
+        description: Absolute count of voters who participated in most recent election.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: recoverable_voters
+        description: Absolute count of recoverable voters (recent lapsers) in state.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: disengaged_voters
+        description: Absolute count of disengaged voters (long-term lapsers) in state.
+        data_type: bigint
+        constraints:
+          - type: not_null
+
+      - name: engagement_opportunity_score
+        description: >
+          Weighted engagement opportunity score based on recoverable voters (60%),
+          disengaged voters (30%), and never voted (10%). Higher scores indicate
+          greater re-engagement potential.
+        data_type: double
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0.0
+                max_value: 100.0
+
+      - name: partisan_lean
+        description: >
+          Competitive classification based on Democrat-Republican registration gap.
+          Highly Competitive (≤5% gap), Competitive (6-15% gap), 
+          Lean Democrat/Republican (>15% gap).
+        data_type: varchar(20)
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  [
+                    "Highly Competitive",
+                    "Competitive",
+                    "Lean Democrat",
+                    "Lean Republican",
+                  ]
+
+      - name: summary_date
+        description: Date when the state summary was generated.
+        data_type: date
+        constraints:
+          - type: not_null
+        tests:
+          - not_null
