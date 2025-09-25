@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Good Party Voter Analytics Pipeline
 
 A dbt-powered data transformation pipeline for voter registration and engagement analysis, designed to support Good Party's mission of promoting independent and non-partisan candidates.
@@ -83,12 +82,14 @@ A production-ready dbt data transformation pipeline that converts raw voter regi
 This pipeline implements a modern **Medallion Architecture** with four distinct layers, each serving specific data quality and analytical purposes:
 
 ```
+
 Raw Sources → Dimension Tables → Staging Layer → Mart Layer
-     ↓              ↓              ↓           ↓
-  CSV Files    Cleaned Dims    Enriched     Analytics
-   (Bronze)      (Silver)     Metrics        Ready
-                                           (Gold)
-```
+↓ ↓ ↓ ↓
+CSV Files Cleaned Dims Enriched Analytics
+(Bronze) (Silver) Metrics Ready
+(Gold)
+
+````
 
 ### Layer Responsibilities
 
@@ -138,7 +139,7 @@ stage_voter_metrics (segmentation, tenure, engagement)
     ↓
 -- Marts aggregate for business consumption
 mart.* (voter_snapshot, partisan_trends, targeting_opportunities, state_summary)
-```
+````
 
 ### Key Design Decisions
 
@@ -221,10 +222,11 @@ mart.* (voter_snapshot, partisan_trends, targeting_opportunities, state_summary)
 
 ### Prerequisites
 
-<<<<<<< HEAD
+```bash
 - dbt Core 1.6+
 - DuckDB adapter
 - dbt-expectations package
+```
 
 ### Setup
 
@@ -252,8 +254,6 @@ dbt run --select mart.*
 # Test specific model
 dbt test --select mart_targeting_opportunities
 
-# Run with custom analysis date
-dbt run --vars '{"analysis_date": "2024-01-01"}'
 ```
 
 ## 📋 Key Metrics & Definitions
@@ -334,6 +334,8 @@ Update the `election_cycles` CTE in `mart_partisan_trends.sql`:
 select '2026-11-03'::date as election_date, 'Midterm' as election_type, 2026 as election_year
 ```
 
+One enrichment opportunity is to use a public API to integrate a more dynamic, granular election calendar.
+
 ### Modifying Engagement Segments
 
 Update the logic in `stage_voter_metrics.sql`:
@@ -361,255 +363,10 @@ round(
     (20.0 * least(avg_registration_tenure / 10.0, 1.0)) +
     (10.0 * least(total_voters / 1000.0, 1.0))
 , 2) as opportunity_score
-=======
-```bash
-# Required dependencies
-dbt-core>=1.6.0
-dbt-duckdb>=1.5.0
-dbt-expectations>=0.10.9
-```
-
-### Installation & Setup
-
-```bash
-# Clone and install dependencies
-git clone <repository>
-cd vote_dbt
-dbt deps
-
-# Run full pipeline
-dbt run
-
-# Execute data quality tests
-dbt test
-
-# Generate and serve documentation
-dbt docs generate && dbt docs serve
-```
-
-### Development Workflow
-
-```bash
-# Run specific layer
-dbt run --select stage.*
-dbt run --select mart.*
-
-# Test individual models
-dbt test --select mart_targeting_opportunities
-
-# Historical analysis with custom date
-dbt run --vars '{"analysis_date": "2023-01-01"}'
-```
-
-## 📈 Business Intelligence Integration
-
-### Example Queries
-
-**Executive KPI Dashboard**
-
-```sql
--- State-level competitive landscape
-SELECT
-    state,
-    total_registered_voters,
-    partisan_lean,
-    engagement_opportunity_score,
-    pct_recoverable_voters
-FROM mart_state_summary
-WHERE partisan_lean IN ('Highly Competitive', 'Competitive')
-ORDER BY engagement_opportunity_score DESC;
-```
-
-**GOTV Campaign Targeting**
-
-```sql
--- Top voter re-engagement opportunities
-SELECT
-    state, age_group, party,
-    opportunity_score,
-    prime_target_voters,
-    pct_recently_lapsed
-FROM mart_targeting_opportunities
-WHERE targeting_tier = 'High Priority'
-ORDER BY opportunity_score DESC LIMIT 50;
-```
-
-**Trend Analysis**
-
-```sql
--- Democratic participation trends in swing states
-SELECT
-    election_year,
-    state,
-    participation_rate,
-    participation_rate_change_pts
-FROM mart_partisan_trends
-WHERE party = 'Democrat'
-    AND state IN ('PA', 'MI', 'WI', 'AZ')
-    AND election_type = 'Presidential'
-ORDER BY election_year DESC, participation_rate_change_pts DESC;
->>>>>>> dev
 ```
 
 ## 🔮 Future Enhancements
 
-<<<<<<< HEAD
-### Phase 2: Enhanced Election Calendar
-
-- **Dynamic election calendar**: Replace hardcoded dates with external election calendar API
-- **State-specific elections**: Include gubernatorial, mayoral, and local elections
-- **Primary elections**: Track primary participation patterns
-- **Special elections**: Account for off-cycle elections
-
-### Phase 3: Advanced Analytics
-
-- **Predictive modeling**: ML models for voter turnout prediction
-- **Cohort analysis**: Track voter behavior changes over time
-- **Geographic clustering**: Identify similar voting districts for targeted strategies
-- **Social network analysis**: Understand voter influence patterns
-
-### Phase 4: Real-time Integration
-
-- **Streaming updates**: Real-time voter registration updates
-- **Campaign integration**: Connect with campaign management systems
-- **API endpoints**: Expose analytics via REST API for applications
-- **Automated alerts**: Notify on significant demographic shifts
-
-## 📈 Performance Optimization
-
-### Current Optimizations
-
-- **Incremental models**: Use `{{ incremental_strategy }}` for large tables
-- **Partitioning**: Tables partitioned by state and election year where beneficial
-- **Indexing**: Key columns indexed for query performance
-- **Materialization**: Balanced use of tables vs views based on usage patterns
-
-### Scaling Considerations
-
-```sql
--- Example incremental configuration for large datasets
-{{ config(
-    materialized='incremental',
-    unique_key='voter_id',
-    on_schema_change='fail',
-    partition_by=['state', 'election_year']
-) }}
-```
-
-## 🧪 Testing Strategy
-
-### Unit Tests
-
-- Individual model logic validation
-- Edge case handling (null values, date boundaries)
-- Data type consistency
-
-### Integration Tests
-
-- Cross-model referential integrity
-- Aggregation accuracy between layers
-- Historical trend consistency
-
-### Data Quality Tests
-
-```yaml
-# Example custom test in schema.yml
-tests:
-  - dbt_expectations.expect_column_values_to_be_between:
-      arguments:
-        column_name: participation_rate
-        min_value: 0
-        max_value: 100
-```
-
-## 🔒 Privacy & Security
-
-### Data Governance
-
-- **PII handling**: Email addresses are the only PII; consider hashing for production
-- **Data retention**: Implement retention policies per organizational requirements
-- **Access control**: Role-based access to sensitive demographic data
-- **Audit logging**: Track all data access and transformations
-
-### Compliance Considerations
-
-- **GDPR**: Right to deletion and data portability
-- **CCPA**: California privacy requirements
-- **Election law**: Compliance with voter privacy regulations
-- **Data sharing**: Restrictions on political data usage
-
-## 🤝 Contributing
-
-### Development Workflow
-
-1. **Feature branch**: Create from `main` for new features
-2. **Model development**: Follow naming conventions (`stage_`, `dim_`, `mart_`)
-3. **Testing**: Add appropriate tests in `schema.yml`
-4. **Documentation**: Update model descriptions and README
-5. **Code review**: Peer review before merging
-
-### Coding Standards
-
-- **SQL style**: Use consistent formatting and clear aliases
-- **Model naming**: Descriptive names reflecting business purpose
-- **Comments**: Explain complex business logic
-- **Version control**: Commit frequently with descriptive messages
-
-### Model Development Guidelines
-
-```sql
--- Template for new mart models
-{{ config(
-    materialized='table',
-    schema='mart',
-    description='Brief model description'
-) }}
-
-with source_data as (
-    select * from {{ ref('stage_model_name') }}
-),
-
-transformed as (
-    -- Business logic transformations
-    select
-        dimension_columns,
-        aggregated_metrics,
-        calculated_fields
-    from source_data
-    group by dimension_columns
-)
-
-select * from transformed
-order by primary_sort_column
-```
-
-## 📞 Support & Resources
-
-### Documentation
-
-- [dbt Documentation](https://docs.getdbt.com/)
-- [dbt-expectations](https://github.com/calogica/dbt-expectations)
-- [Good Party Data Guidelines](internal-link)
-
-### Troubleshooting
-
-- **Model failures**: Check `logs/dbt.log` for detailed error messages
-- **Test failures**: Run `dbt test --select failing_model` for specifics
-- **Performance issues**: Use `dbt run --profile` to identify bottlenecks
-
-### Team Contacts
-
-- **Data Engineering**: data-eng@goodparty.org
-- **Analytics**: analytics@goodparty.org
-- **Platform**: platform@goodparty.org
-
----
-
-_This pipeline supports Good Party's mission to strengthen democracy through data-driven insights that help independent and non-partisan candidates compete effectively in elections._
-
-```bash
-Note: This README was autogenerated by Claude.ai
-=======
 ### Phase 2: Enhanced Dimensional Model
 
 - **State dimension table** with geographic, economic, and political context
@@ -694,5 +451,4 @@ _This dbt pipeline provides the foundational data architecture supporting Good P
 
 ```bash
 Note: This README was generated automatically using Cline.ai
->>>>>>> dev
 ```

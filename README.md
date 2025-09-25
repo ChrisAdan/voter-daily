@@ -61,9 +61,14 @@ python scripts/main.py
 cd vote_dbt
 dbt deps && dbt build
 
+# View the dbt docs site
+dbt docs generate
+dbt docs serve
+
 # Launch dashboard
 cd .. && streamlit run app.py
 # Dashboard: http://localhost:8501
+
 ```
 
 ## 📊 What You'll See
