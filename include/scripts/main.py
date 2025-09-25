@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GoodParty Data Pipeline - Main Entry Point
+GoodParty Voter Analytics Pipeline - Main Entry Point
 ========================================
 
 This script serves as the main entry point for the GoodParty voter data processing pipeline.

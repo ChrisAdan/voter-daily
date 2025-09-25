@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GoodParty Data Pipeline - Extract & Load Module
+GoodParty Voter Analytics Pipeline - Extract & Load Module
 =============================================
 
 This module handles the extraction of voter data from CSV files and loading
