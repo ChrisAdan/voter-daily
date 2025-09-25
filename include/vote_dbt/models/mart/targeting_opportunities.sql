@@ -67,10 +67,8 @@ scoring as (
         round(100.0 * active_voters / total_voters, 2)::double as pct_active_voters,
         
         -- Create composite opportunity scores (0-100 scale)
-<<<<<<< HEAD
-=======
+
         -- Weighted average of state/party based on the distribution of voters and how long since they voted
->>>>>>> dev
         case
             when total_voters < 3 then 0.0  -- Skip small segments [mock data, so bear with me]
             else round(

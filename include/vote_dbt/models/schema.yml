@@ -16,20 +16,11 @@ sources:
           - name: record_uuid
             description: Unique record identifier (UUID, primary key).
             data_type: string
-<<<<<<< HEAD
-          - name: source_id
-            description: Original ID from the source file.
-            data_type: string
-=======
-            data_tests:
-              - unique
-              - not_null
           - name: source_id
             description: Original ID from the source file.
             data_type: string
             data_tests:
               - not_null
->>>>>>> dev
           - name: first_name
             description: Voter's first name.
             data_type: string
@@ -83,13 +74,6 @@ models:
     contract:
       enforced: true
     tests:
-<<<<<<< HEAD
-      - dbt_expectations.expect_table_row_count_to_be_between:
-          arguments:
-            min_value: 1
-            max_value: 10000000
-=======
->>>>>>> dev
       - dbt_expectations.expect_table_columns_to_match_ordered_list:
           arguments:
             column_list:
@@ -730,14 +714,7 @@ models:
       (Presidential vs Midterm). Supports trend analysis and electoral forecasting.
     contract:
       enforced: true
-<<<<<<< HEAD
-    tests:
-      - dbt_expectations.expect_table_row_count_to_be_between:
-          arguments:
-            min_value: 1
-            max_value: 100000
-=======
->>>>>>> dev
+
     columns:
       - name: election_year
         description: Year of the federal election (2008, 2010, 2012, etc.).
@@ -1160,15 +1137,12 @@ models:
       planning and resource allocation decisions.
     contract:
       enforced: true
-<<<<<<< HEAD
     tests:
       - dbt_expectations.expect_table_row_count_to_be_between:
           arguments:
             min_value: 1
             max_value: 60 # 50 states + territories
-=======
 
->>>>>>> dev
     columns:
       - name: state
         description: Two-letter state abbreviation.

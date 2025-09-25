@@ -24,55 +24,40 @@ models:
   vote_dbt:
     +materialized: view
     +on_schema_change: "fail"
-<<<<<<< HEAD
-=======
     +tags:
       - goodparty
       - election
       - federal
       - daily
->>>>>>> dev
 
     # Staging layer - cleaned, standardized data
     stage:
       +schema: stage
       +materialized: view
-<<<<<<< HEAD
-=======
       +tags:
         - stage
->>>>>>> dev
 
     # Dimension layer - core business entities
     dim:
       +schema: dim
       +materialized: table
-<<<<<<< HEAD
-=======
       +tags:
         - dim
->>>>>>> dev
 
     # Mart layer - analytics-ready aggregated tables
     mart:
       +schema: mart
       +materialized: table
-<<<<<<< HEAD
-=======
       +tags:
         - mart
->>>>>>> dev
 
     # Audit layer - data quality and lineage tracking
     audit:
       +schema: audit
       +materialized: view
-<<<<<<< HEAD
-=======
       +tags:
         - audit
         - monitor
->>>>>>> dev
 
 # Global configurations
 vars:

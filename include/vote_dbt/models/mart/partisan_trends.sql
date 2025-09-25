@@ -53,12 +53,8 @@ voter_eligibility_by_election as (
         case 
             when v.registered_date <= e.election_date 
             and v.last_voted_date is not null
-<<<<<<< HEAD
-            and abs(datediff('day', v.last_voted_date, e.election_date)) <= 90
-=======
             -- account for delayed recording
             and abs(datediff('day', v.last_voted_date, e.election_date)) <= 90 
->>>>>>> dev
             then 1 else 0 
         end::integer as likely_voted
         
