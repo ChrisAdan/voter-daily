@@ -21,12 +21,31 @@ import hashlib
 class VoteDataProcessor:
     """Main class for processing voter data from CSV to DuckDB"""
     
-    def __init__(self, db_path: str = "include/data/", target: str = "dev"):
-        self.target = target
-        self.db_path = Path(f"{db_path}goodparty_{target if target else "dev"}.duckdb")
-        self.raw_data_path = Path("include/data/raw")
+    def __init__(self, target: str = "dev"):
+        self.target = target or "dev"
+        
+        # Detect environment and set paths accordingly
+        if self._is_airflow_container():
+            # Airflow container paths - use /tmp for writable locations
+            self.project_root = Path("/usr/local/airflow")
+            self.data_dir = self.project_root / "include" / "data"
+            self.raw_data_path = self.data_dir / "raw"
+            self.db_path = Path('/tmp') / f"goodparty_{self.target}.duckdb"
+            self.last_run_file = Path('/tmp') / f".last_run_timestamp_{self.target}"
+        else:
+            # Local development paths
+            self.project_root = Path(__file__).resolve().parents[2]
+            self.data_dir = self.project_root / "include" / "data"
+            self.raw_data_path = self.data_dir / "raw"
+            self.db_path = self.data_dir / f"goodparty_{self.target}.duckdb"
+            self.last_run_file = self.data_dir / f".last_run_timestamp_{self.target}"
+        
         self.connection = None
-        self.last_run_file = Path(f"include/data/.last_run_timestamp_{target}")
+        
+        # Ensure directories exist
+        os.makedirs(self.data_dir, exist_ok=True)
+        os.makedirs(self.raw_data_path, exist_ok=True)
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
         # CSV schema mapping
         self.csv_schema = {
@@ -42,13 +61,24 @@ class VoteDataProcessor:
             'last_voted_date': 'DATE'
         }
     
+    def _is_airflow_container(self) -> bool:
+        """Detect if running in Airflow container environment"""
+        # Check for Airflow-specific environment variables or paths
+        airflow_indicators = [
+            os.path.exists("/usr/local/airflow"),
+            os.environ.get("AIRFLOW_HOME") is not None,
+            os.environ.get("DBT_PROFILES_DIR") == "/usr/local/airflow/include/vote_dbt",
+            "airflow" in os.getcwd().lower()
+        ]
+        return any(airflow_indicators)
+    
     def create_db(self, db_type: str = 'duckdb') -> bool:
         """Create database connection"""
         try:
             if db_type.lower() == 'duckdb':
-                # Ensure data directory exists
+                # Ensure /tmp is writable
                 os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-                self.connection = duckdb.connect(self.db_path)
+                self.connection = duckdb.connect(str(self.db_path))
                 print(f"✅ Connected to DuckDB: {self.db_path}")
                 return True
             else:
@@ -67,7 +97,6 @@ class VoteDataProcessor:
             self.db_command('create_schema', f"CREATE SCHEMA IF NOT EXISTS raw")
             
             # Create vote_records table with proper schema
-            # Author's note - hardcoding schemas here, but should consider a better means of centralizing these
             create_table_sql = """
             CREATE TABLE IF NOT EXISTS raw.vote_records (
                 record_uuid VARCHAR PRIMARY KEY,
@@ -152,19 +181,23 @@ class VoteDataProcessor:
             # Find all CSV files in raw data directory
             if not self.raw_data_path.exists():
                 print(f"⚠️  Raw data directory not found: {self.raw_data_path}")
+                print(f"Creating directory: {self.raw_data_path}")
+                os.makedirs(self.raw_data_path, exist_ok=True)
                 return csv_files
             
             for csv_file in self.raw_data_path.glob("*.csv"):
-                # FIXED: Ensure file modification time is timezone-aware
-                file_mod_time = datetime.fromtimestamp(
-                    csv_file.stat().st_mtime, 
-                    tz=timezone.utc
-                )
-                
-                # Include file if it's newer than last run or if this is first run
-                if last_run_time is None or file_mod_time > last_run_time:
-                    csv_files.append((csv_file, file_mod_time))
-                    print(f"📄 Found file to process: {csv_file.name} (modified: {file_mod_time})")
+                try:
+                    file_mod_time = datetime.fromtimestamp(
+                        csv_file.stat().st_mtime, 
+                        tz=timezone.utc
+                    )
+                    # Include file if it's newer than last run or if this is first run
+                    if last_run_time is None or file_mod_time > last_run_time:
+                        csv_files.append((csv_file, file_mod_time))
+                        print(f"📄 Found file to process: {csv_file.name} (modified: {file_mod_time})")
+                except OSError as e:
+                    print(f"⚠️  Could not access file {csv_file}: {e}")
+                    continue
             
             # Sort by modification time (oldest first)
             csv_files.sort(key=lambda x: x[1])
@@ -179,7 +212,7 @@ class VoteDataProcessor:
             return []
     
     def get_last_run_timestamp(self) -> Optional[datetime]:
-        """Get the timestamp of the last successful run - FIXED timezone handling"""
+        """Get the timestamp of the last successful run"""
         try:
             # Try to get from database metadata table first
             if self.connection:
@@ -188,10 +221,8 @@ class VoteDataProcessor:
                         "SELECT last_processed_at FROM raw.processing_metadata ORDER BY id DESC LIMIT 1")
                     if result and result[0][0]:
                         db_timestamp = result[0][0]
-                        # FIXED: Ensure database timestamp is timezone-aware
                         if isinstance(db_timestamp, datetime):
                             if db_timestamp.tzinfo is None:
-                                # If naive, assume UTC
                                 db_timestamp = db_timestamp.replace(tzinfo=timezone.utc)
                             return db_timestamp
                 except Exception as db_err:
@@ -203,7 +234,6 @@ class VoteDataProcessor:
                     with open(self.last_run_file, 'r') as f:
                         timestamp_str = f.read().strip()
                         file_timestamp = datetime.fromisoformat(timestamp_str)
-                        # FIXED: Ensure file timestamp is timezone-aware
                         if file_timestamp.tzinfo is None:
                             file_timestamp = file_timestamp.replace(tzinfo=timezone.utc)
                         return file_timestamp
@@ -218,12 +248,11 @@ class VoteDataProcessor:
     
     def update_last_run_timestamp(self, files_processed: int = 0, records_processed: int = 0, 
                                    voter_count: int = 0, state_count: int = 0, timestamp: datetime = None):
-        """Update the last run timestamp with processing statistics - FIXED timezone handling"""
+        """Update the last run timestamp with processing statistics"""
         try:
             if timestamp is None:
                 timestamp = datetime.now(timezone.utc)
             else:
-                # FIXED: Ensure timestamp is timezone-aware
                 if timestamp.tzinfo is None:
                     timestamp = timestamp.replace(tzinfo=timezone.utc)
             
@@ -259,27 +288,35 @@ class VoteDataProcessor:
                 except Exception as e:
                     print(f"⚠️  Could not update database timestamp: {e}")
             
-            # Update file as backup - always use timezone-aware timestamp
-            os.makedirs(os.path.dirname(self.last_run_file), exist_ok=True)
-            with open(self.last_run_file, 'w') as f:
-                f.write(timestamp.isoformat())
-                print(f'Wrote to: {self.last_run_file}')
+            # Update file as backup
+            try:
+                os.makedirs(os.path.dirname(self.last_run_file), exist_ok=True)
+                with open(self.last_run_file, 'w') as f:
+                    f.write(timestamp.isoformat())
+                    print(f'✅ Updated timestamp file: {self.last_run_file}')
+            except Exception as e:
+                print(f"⚠️  Could not write timestamp file: {e}")
                 
         except Exception as e:
             print(f"⚠️  Could not update last run timestamp: {e}")
     
     def generate_record_hash(self, record: Dict) -> str:
         """Generate a hash for record deduplication"""
-        # Create hash from key fields (excluding metadata fields)
-        key_fields = ['source_id', 'first_name', 'last_name', 'email', 'registered_date']
+        key_fields = ['source_id', 'first_name', 'last_name', 'email']
         hash_string = '|'.join(str(record.get(field, '')) for field in key_fields)
+        
+        def normalize(value):
+            if value is None:
+                return ''
+            if isinstance(value, str):
+                return value.strip().lower()
+            return str(value)
+            
+        hash_string = normalize(hash_string)
         return hashlib.md5(hash_string.encode()).hexdigest()
     
     def quick_error_check(self, file_path: Path, error_threshold: float = 0.05) -> Dict:
-        """
-        Quickly check percentage of malformed rows to determine if file is processable.
-        Returns decision on whether to proceed with pandas read_csv with error skipping.
-        """
+        """Quickly check percentage of malformed rows to determine if file is processable."""
         try:
             total_rows = 0
             error_rows = 0
@@ -291,7 +328,6 @@ class VoteDataProcessor:
                 # Skip header
                 try:
                     header = next(reader)
-                    # Clean header to handle trailing commas
                     clean_header = [col.strip() for col in header if col.strip()]
                     if len(clean_header) != expected_cols:
                         print(f"Header has {len(clean_header)} columns, expected {expected_cols}")
@@ -344,9 +380,7 @@ class VoteDataProcessor:
             return {'can_process': False, 'error': f"Failed to scan file: {str(e)}"}
 
     def validate_schema(self, df: pd.DataFrame) -> Dict:
-        """
-        Validate that the DataFrame has the expected schema after pandas read.
-        """
+        """Validate that the DataFrame has the expected schema after pandas read."""
         try:
             expected_columns = list(self.csv_schema.keys())
             actual_columns = list(df.columns)
@@ -376,21 +410,18 @@ class VoteDataProcessor:
                 series = df[col]
                 
                 if expected_type == 'INTEGER':
-                    # Check if values can be converted to integer (allowing for NaN)
                     try:
                         pd.to_numeric(series, errors='coerce')
                     except:
                         validation_errors.append(f"Column '{col}' cannot be converted to integer")
                         
                 elif expected_type == 'DATE':
-                    # Check if values can be converted to date
                     try:
                         pd.to_datetime(series, errors='coerce')
                     except:
                         validation_errors.append(f"Column '{col}' cannot be converted to date")
                         
                 elif expected_type == 'VARCHAR':
-                    # VARCHAR is most flexible, just ensure it's not completely empty
                     if series.isna().all():
                         print(f"Warning: Column '{col}' is entirely empty")
             
@@ -418,11 +449,7 @@ class VoteDataProcessor:
             }
 
     def process_csv_file(self, file_path: Path, truncate_mode: bool = False) -> Dict:
-        """
-        CSV processing with two-step approach:
-        1. Quick error check to determine if file is processable
-        2. Pandas read with error skipping + schema validation
-        """
+        """CSV processing with two-step approach"""
         try:
             print(f"\nProcessing file: {file_path.name}")
             
@@ -489,7 +516,6 @@ class VoteDataProcessor:
                 'first_name': row['first_name'], 
                 'last_name': row['last_name'],
                 'email': row['email'],
-                'registered_date': row['registered_date']
             }), axis=1)
             
             # Filter duplicates if not in truncate mode
@@ -510,7 +536,7 @@ class VoteDataProcessor:
                     'errors': 0
                 }
             
-            # Add timestamp columns - FIXED: Always use timezone-aware timestamps
+            # Add timestamp columns
             current_time = datetime.now(timezone.utc)
             df['inserted_at'] = current_time
             df['updated_at'] = current_time
@@ -537,11 +563,8 @@ class VoteDataProcessor:
             return {'success': False, 'error': str(e)}
 
     def clean_and_convert_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Clean and convert DataFrame to expected types after pandas read.
-        """
+        """Clean and convert DataFrame to expected types after pandas read."""
         try:
-            
             # Convert age to integer
             if 'age' in df.columns:
                 df['age'] = pd.to_numeric(df['age'], errors='coerce').astype('Int64')

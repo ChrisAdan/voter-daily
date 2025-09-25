@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Good Party Voter Analytics Pipeline
 
 A dbt-powered data transformation pipeline for voter registration and engagement analysis, designed to support Good Party's mission of promoting independent and non-partisan candidates.
@@ -72,12 +73,155 @@ select state, partisan_lean, engagement_opportunity_score, total_registered_vote
 from mart_state_summary
 where partisan_lean in ('Highly Competitive', 'Competitive')
 order by engagement_opportunity_score desc;
+=======
+# Voter Analytics Pipeline | dbt Reference
+
+A production-ready dbt data transformation pipeline that converts raw voter registration data into analytics-ready insights supporting the mission to strengthen democracy through independent and non-partisan candidates.
+
+## 🏗️ Architecture Overview
+
+This pipeline implements a modern **Medallion Architecture** with four distinct layers, each serving specific data quality and analytical purposes:
+
+```
+Raw Sources → Dimension Tables → Staging Layer → Mart Layer
+     ↓              ↓              ↓           ↓
+  CSV Files    Cleaned Dims    Enriched     Analytics
+   (Bronze)      (Silver)     Metrics        Ready
+                                           (Gold)
+```
+
+### Layer Responsibilities
+
+**Raw Layer (`raw` schema)**
+
+- Direct CSV ingestion landing zone
+- Minimal processing, preserves source data integrity
+- Audit fields for data lineage and quality monitoring
+- `vote_records`: Raw voter registration records with full history
+
+**Dimension Layer (`dim` schema)**
+
+- Core business entities with data quality enforcement
+- Deduplication, standardization, and cleansing logic
+- Primary keys and referential integrity constraints
+- `dim_voter`: Authoritative voter dimension with demographics
+
+**Staging Layer (`stage` schema)**
+
+- Enriched, analytics-ready individual records
+- Derived metrics and behavioral segmentation
+- Incremental processing for performance optimization
+- `stage_voter_metrics`: Voter-level metrics with engagement scoring
+
+**Mart Layer (`mart` schema)**
+
+- Aggregated, business-ready analytical tables
+- Optimized for dashboard consumption and reporting
+- Cross-tabulated insights across multiple dimensions
+- Four core marts supporting distinct analytical use cases
+
+## 📊 Data Model Details
+
+![dbt Lineage](docs/lineage.png)
+
+### Core Data Flow
+
+```sql
+-- Raw ingestion preserves source fidelity
+raw.vote_records (CSV → DuckDB)
+    ↓
+-- Dimension layer ensures data quality
+dim_voter (deduped, validated, standardized)
+    ↓
+-- Staging enriches with analytics fields
+stage_voter_metrics (segmentation, tenure, engagement)
+    ↓
+-- Marts aggregate for business consumption
+mart.* (voter_snapshot, partisan_trends, targeting_opportunities, state_summary)
+```
+
+### Key Design Decisions
+
+**Incremental Processing**
+
+- `stage_voter_metrics` uses incremental materialization with `voter_id` as unique key
+- Processes only new/modified records based on audit timestamps
+- Balances freshness with computational efficiency
+
+**Behavioral Segmentation**
+
+- Standardized voter engagement categories based on federal election participation
+- Hardcoded election calendar via `simple_elections_since_last_vote` macro
+- Current Voter (0 missed) → Never Voted (null history)
+
+**Demographic Standardization**
+
+- Age groups aligned with Pew Research political demographic brackets
+- Party affiliation simplified to three major categories for analytical clarity
+- State-level geographic analysis using standard two-letter codes
+
+## 🎯 Mart Layer Analytics
+
+### `mart_voter_snapshot`
+
+**Purpose**: Current-state demographic cross-tabs for executive dashboards  
+**Grain**: State × Age Group × Gender × Party × Engagement Segment  
+**Key Metrics**: Voter counts, engagement percentages, tenure statistics  
+**Use Case**: "Show me current voter composition and engagement by demographics"
+
+### `mart_partisan_trends`
+
+**Purpose**: Time series analysis of partisan composition across election cycles  
+**Grain**: Election Year × Type × State × Demographics × Party  
+**Key Metrics**: Eligible voters, participation rates, trend changes  
+**Use Case**: "Track Democratic participation in Pennsylvania over presidential cycles"
+
+### `mart_targeting_opportunities`
+
+**Purpose**: Ranked segments for voter re-engagement campaigns  
+**Grain**: State × Age Group × Gender × Party (with composite scoring)  
+**Key Metrics**: Opportunity scores, targeting tiers, lapsed voter counts  
+**Use Case**: "Identify top 20 demographic segments for GOTV outreach"
+
+### `mart_state_summary`
+
+**Purpose**: Executive-level geographic competitive analysis  
+**Grain**: State-level aggregations with partisan lean classification  
+**Key Metrics**: Total voters, party composition, competitive indicators  
+**Use Case**: "Show me competitive states with high engagement opportunities"
+
+## 🔧 Technical Implementation
+
+### Data Quality Framework
+
+- **dbt-expectations** package for advanced data quality testing
+- **Contract enforcement** on all mart models for API stability
+- **Referential integrity** testing between dimension and fact tables
+- **Regex validation** for email formats and state codes
+- **Range validation** for dates, percentages, and counts
+
+### Performance Optimizations
+
+- **Incremental processing** on high-volume staging tables
+- **Appropriate materializations**: Views for staging, tables for marts
+- **Efficient aggregations** using CTEs and window functions
+- **Composite indexes** on frequently joined columns
+
+### Macro Library
+
+```sql
+-- Centralized election calendar logic
+{{ simple_elections_since_last_vote('last_voted_date') }}
+-- Returns: Count of federal elections missed since last participation
+-- Hardcoded: 2008-2024 federal election dates for initial implementation
+>>>>>>> dev
 ```
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
+<<<<<<< HEAD
 - dbt Core 1.6+
 - DuckDB adapter
 - dbt-expectations package
@@ -217,10 +361,99 @@ round(
     (20.0 * least(avg_registration_tenure / 10.0, 1.0)) +
     (10.0 * least(total_voters / 1000.0, 1.0))
 , 2) as opportunity_score
+=======
+```bash
+# Required dependencies
+dbt-core>=1.6.0
+dbt-duckdb>=1.5.0
+dbt-expectations>=0.10.9
+```
+
+### Installation & Setup
+
+```bash
+# Clone and install dependencies
+git clone <repository>
+cd vote_dbt
+dbt deps
+
+# Run full pipeline
+dbt run
+
+# Execute data quality tests
+dbt test
+
+# Generate and serve documentation
+dbt docs generate && dbt docs serve
+```
+
+### Development Workflow
+
+```bash
+# Run specific layer
+dbt run --select stage.*
+dbt run --select mart.*
+
+# Test individual models
+dbt test --select mart_targeting_opportunities
+
+# Historical analysis with custom date
+dbt run --vars '{"analysis_date": "2023-01-01"}'
+```
+
+## 📈 Business Intelligence Integration
+
+### Example Queries
+
+**Executive KPI Dashboard**
+
+```sql
+-- State-level competitive landscape
+SELECT
+    state,
+    total_registered_voters,
+    partisan_lean,
+    engagement_opportunity_score,
+    pct_recoverable_voters
+FROM mart_state_summary
+WHERE partisan_lean IN ('Highly Competitive', 'Competitive')
+ORDER BY engagement_opportunity_score DESC;
+```
+
+**GOTV Campaign Targeting**
+
+```sql
+-- Top voter re-engagement opportunities
+SELECT
+    state, age_group, party,
+    opportunity_score,
+    prime_target_voters,
+    pct_recently_lapsed
+FROM mart_targeting_opportunities
+WHERE targeting_tier = 'High Priority'
+ORDER BY opportunity_score DESC LIMIT 50;
+```
+
+**Trend Analysis**
+
+```sql
+-- Democratic participation trends in swing states
+SELECT
+    election_year,
+    state,
+    participation_rate,
+    participation_rate_change_pts
+FROM mart_partisan_trends
+WHERE party = 'Democrat'
+    AND state IN ('PA', 'MI', 'WI', 'AZ')
+    AND election_type = 'Presidential'
+ORDER BY election_year DESC, participation_rate_change_pts DESC;
+>>>>>>> dev
 ```
 
 ## 🔮 Future Enhancements
 
+<<<<<<< HEAD
 ### Phase 2: Enhanced Election Calendar
 
 - **Dynamic election calendar**: Replace hardcoded dates with external election calendar API
@@ -376,4 +609,90 @@ _This pipeline supports Good Party's mission to strengthen democracy through dat
 
 ```bash
 Note: This README was autogenerated by Claude.ai
+=======
+### Phase 2: Enhanced Dimensional Model
+
+- **State dimension table** with geographic, economic, and political context
+- **Gender dimension expansion** to support non-binary and inclusive categories
+- **Dynamic election calendar** replacing hardcoded dates with external API integration
+- **Household clustering** using address standardization for family-level insights
+
+### Phase 3: Advanced Analytics
+
+- **Predictive voter turnout models** using historical patterns and external factors
+- **Cohort analysis** tracking voter lifecycle transitions over time
+- **Geographic clustering** identifying similar voting districts for targeted strategies
+- **Campaign effectiveness tracking** measuring outreach ROI and engagement lift
+
+### Phase 4: Real-time Operations
+
+- **Streaming incremental updates** for near real-time voter registration changes
+- **Change data capture** from upstream voter file systems
+- **Automated data quality monitoring** with alert systems for anomaly detection
+- **API layer** exposing mart tables for application consumption
+
+### Phase 5: Operational Integration
+
+- **Campaign management system integration** for seamless targeting workflows
+- **Automated report generation** with email distribution for stakeholders
+- **Interactive dashboard application** built on mart layer foundations
+- **Multi-tenant architecture** supporting state and local Good Party chapters
+
+## 🔒 Data Governance & Compliance
+
+### Privacy Considerations
+
+- **PII minimization**: Only email addresses stored; consider hashing for production
+- **Data retention policies**: Implement automated archival of historical records
+- **Access control**: Role-based permissions for sensitive demographic data
+- **Audit logging**: Comprehensive tracking of all data access and transformations
+
+### Compliance Framework
+
+- **GDPR compliance**: Right to deletion and data portability requirements
+- **CCPA compliance**: California privacy law requirements for voter data
+- **Election law compliance**: Adherence to voter privacy and usage regulations
+- **Data sharing restrictions**: Proper handling of political data usage limitations
+
+## 🧪 Testing & Data Quality
+
+### Testing Strategy
+
+```yaml
+# Comprehensive testing approach
+Unit Tests: # Individual model logic validation
+Integration Tests: # Cross-model referential integrity
+Data Quality Tests: # dbt-expectations for advanced validation
+Contract Tests: # Mart table schema enforcement
+```
+
+### Quality Metrics
+
+- **Completeness**: Null value tracking across critical fields
+- **Uniqueness**: Primary key constraint enforcement
+- **Validity**: Range and format validation for all data types
+- **Consistency**: Cross-table relationship validation
+- **Timeliness**: Data freshness monitoring and SLA tracking
+
+## 📞 Next Steps
+
+### Immediate Priorities
+
+1. **Snapshot implementation** for slowly changing dimensions (voter registration changes over time)
+2. **Performance benchmarking** with larger datasets and optimization tuning
+3. **Production deployment** with proper CI/CD pipeline and environment management
+
+### Integration Development
+
+1. **Dashboard application wrapper** for business user consumption of mart tables
+2. **API layer development** exposing analytical insights for campaign tools
+3. **Automated reporting system** with scheduled delivery of key insights
+
+---
+
+_This dbt pipeline provides the foundational data architecture supporting Good Party's mission to strengthen democracy through data-driven insights that help independent and non-partisan candidates compete effectively in elections._
+
+```bash
+Note: This README was generated automatically using Cline.ai
+>>>>>>> dev
 ```
