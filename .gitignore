@@ -209,5 +209,6 @@ __marimo__/
 # data
 *.duckdb
 *.csv
+!goodparty-data-engineering-case-study-data.csv
 .last_run_timestamp_*
 .vscode/
