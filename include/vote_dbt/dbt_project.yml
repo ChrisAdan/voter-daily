@@ -29,6 +29,9 @@ models:
       - election
       - federal
       - daily
+    # Past and Future elction data from MIT and Google's Civic API
+    seeds:
+      +schema: dim
 
     # Staging layer - cleaned, standardized data
     stage:

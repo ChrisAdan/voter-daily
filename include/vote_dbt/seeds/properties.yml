@@ -1,0 +1,320 @@
+version: 2
+
+seeds:
+  # =============================================================================
+  # RAW FACT: Granular MIT Election Lab Data
+  # =============================================================================
+  - name: elections_historic_raw_mit
+    description: >
+      Raw presidential election results from MIT Election Lab (1976-2020).
+      Candidate-level granularity with vote totals by state. Source of truth
+      for historic election analytics.
+
+    config:
+      schema: fact
+
+    columns:
+      - name: year
+        description: Election year
+        data_type: integer
+        tests:
+          - not_null
+
+      - name: state
+        description: Full state name
+        data_type: string
+        tests:
+          - not_null
+
+      - name: state_po
+        description: Two-letter state postal code
+        data_type: string
+        tests:
+          - not_null
+
+      - name: state_fips
+        description: Federal Information Processing Standards state code
+        data_type: integer
+
+      - name: state_cen
+        description: Census Bureau state code
+        data_type: integer
+
+      - name: state_ic
+        description: ICPSR state code
+        data_type: integer
+
+      - name: office
+        description: Office being contested (e.g., "US PRESIDENT")
+        data_type: string
+        tests:
+          - not_null
+
+      - name: candidate
+        description: Candidate name
+        data_type: string
+
+      - name: party_detailed
+        description: Detailed party affiliation as reported
+        data_type: string
+
+      - name: writein
+        description: Whether this was a write-in candidate (TRUE/FALSE)
+        data_type: string
+
+      - name: candidatevotes
+        description: Votes received by this candidate in this state
+        data_type: integer
+        tests:
+          - not_null
+
+      - name: totalvotes
+        description: Total votes cast in this state for this election
+        data_type: integer
+        tests:
+          - not_null
+
+      - name: version
+        description: MIT dataset version identifier
+        data_type: string
+
+      - name: notes
+        description: Additional notes from MIT Election Lab
+        data_type: string
+
+      - name: party_simplified
+        description: Standardized party (DEMOCRAT, REPUBLICAN, LIBERTARIAN, OTHER)
+        data_type: string
+        tests:
+          - accepted_values:
+              arguments:
+                values:
+                  ["DEMOCRAT", "REPUBLICAN", "LIBERTARIAN", "GREEN", "OTHER"]
+
+      - name: insertion_date
+        description: UTC timestamp when record was inserted by seed script
+        data_type: timestamp
+
+  # =============================================================================
+  # AGGREGATED FACT: Federal Election Outcomes
+  # =============================================================================
+  - name: election_outcome_federal_historic
+    description: >
+      Aggregated federal election outcomes (1976-2020). One row per election
+      with winner information and total vote counts. Derived from MIT raw data.
+
+    config:
+      schema: fact
+
+    columns:
+      - name: election_id
+        description: Unique identifier for this election (UUID)
+        data_type: string
+        tests:
+          - unique
+          - not_null
+
+      - name: election_date
+        description: Date of the election (YYYY-MM-DD)
+        data_type: date
+        tests:
+          - not_null
+
+      - name: election_year
+        description: Year of the election
+        data_type: integer
+        tests:
+          - not_null
+
+      - name: election_name
+        description: Human-readable election name
+        data_type: string
+        tests:
+          - not_null
+
+      - name: election_type
+        description: Type of election
+        data_type: string
+        tests:
+          - accepted_values:
+              arguments:
+                values:
+                  ["Presidential", "Midterm", "Primary", "Special", "Off-Year"]
+
+      - name: election_level
+        description: Level of government
+        data_type: string
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["Federal", "State", "Local"]
+
+      - name: office_type
+        description: Office being contested
+        data_type: string
+        tests:
+          - accepted_values:
+              arguments:
+                values:
+                  [
+                    "President",
+                    "Senate",
+                    "House",
+                    "Congress",
+                    "Governor",
+                    "General",
+                  ]
+
+      - name: is_primary
+        description: Whether this is a primary election
+        data_type: boolean
+        tests:
+          - not_null
+
+      - name: state
+        description: State postal code (NULL for national elections)
+        data_type: string
+
+      - name: total_votes_cast
+        description: Total votes cast across all candidates
+        data_type: integer
+
+      - name: winner_name
+        description: Name of winning candidate
+        data_type: string
+
+      - name: winner_party
+        description: Party of winning candidate
+        data_type: string
+
+      - name: winner_votes
+        description: Votes received by winning candidate
+        data_type: integer
+
+      - name: data_source
+        description: Source of the data
+        data_type: string
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["MIT Election Lab"]
+
+      - name: last_updated
+        description: UTC timestamp of last update
+        data_type: timestamp
+        tests:
+          - not_null
+
+  # =============================================================================
+  # DIMENSION: Upcoming Election Calendar
+  # =============================================================================
+  - name: election_calendar_upcoming
+    description: >
+      Scheduled upcoming elections (2021+). Combines Google Civic Information
+      API data with calculated federal election schedule. Used for voter
+      engagement planning and registration campaigns.
+
+    config:
+      schema: dim
+
+    columns:
+      - name: election_id
+        description: Unique identifier for this election (UUID)
+        data_type: string
+        tests:
+          - unique
+          - not_null
+
+      - name: election_date
+        description: Scheduled date of the election (YYYY-MM-DD)
+        data_type: date
+        tests:
+          - not_null
+
+      - name: election_year
+        description: Year of the election
+        data_type: integer
+        tests:
+          - not_null
+
+      - name: election_name
+        description: Human-readable election name
+        data_type: string
+        tests:
+          - not_null
+
+      - name: election_type
+        description: Type of election
+        data_type: string
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  ["Presidential", "Midterm", "Primary", "Special", "Off-Year"]
+
+      - name: election_level
+        description: Level of government
+        data_type: string
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Federal", "State", "Local", "General"]
+
+      - name: office_type
+        description: Office being contested
+        data_type: string
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  [
+                    "President",
+                    "Senate",
+                    "House",
+                    "Congress",
+                    "Governor",
+                    "General",
+                  ]
+
+      - name: is_primary
+        description: Whether this is a primary election
+        data_type: boolean
+        tests:
+          - not_null
+
+      - name: state
+        description: State postal code (NULL for multi-state/national, "Multiple" for Super Tuesday)
+        data_type: string
+
+      - name: data_source
+        description: Source of the election data
+        data_type: string
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  [
+                    "Google Civic Information API",
+                    "Calculated Federal Schedule",
+                  ]
+
+      - name: last_updated
+        description: UTC timestamp of last update
+        data_type: timestamp
+        tests:
+          - not_null
+
+    # Seed-level tests
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - election_date
+              - election_type
+              - election_level
+              - state
