@@ -212,3 +212,7 @@ __marimo__/
 !goodparty-data-engineering-case-study-data.csv
 .last_run_timestamp_*
 .vscode/
+
+include/.env
+*.env
+!.env.example
