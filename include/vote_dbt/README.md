@@ -13,7 +13,7 @@ dim_voter (deduplication, validation)
     ↓
 stage_voter_metrics (enrichment, segmentation)
     ↓
-mart.* (4 aggregated analytics tables)
+prod_mart.* (4 aggregated analytics tables)
 ```
 
 ![dbt Lineage](docs/lineage.png)
@@ -29,7 +29,7 @@ mart.* (4 aggregated analytics tables)
 ```sql
 -- Example: Current engagement by state and party
 SELECT state, party, pct_current_voters, pct_targetable_voters
-FROM mart_voter_snapshot
+FROM prod_mart.voter_snapshot
 ORDER BY pct_targetable_voters DESC;
 ```
 
@@ -42,7 +42,7 @@ ORDER BY pct_targetable_voters DESC;
 ```sql
 -- Example: Trend analysis
 SELECT election_year, election_type, state, participation_rate
-FROM mart_partisan_trends
+FROM prod_mart.partisan_trends
 WHERE party = 'Democrat' AND state = 'PA'
 ORDER BY election_year DESC;
 ```
@@ -56,7 +56,7 @@ ORDER BY election_year DESC;
 ```sql
 -- Example: High-priority targets
 SELECT state, age_group, gender, party, opportunity_score, prime_target_voters
-FROM mart_targeting_opportunities
+FROM prod_mart.targeting_opportunities
 WHERE targeting_tier = 'High Priority'
 ORDER BY opportunity_score DESC LIMIT 20;
 ```
@@ -70,7 +70,7 @@ ORDER BY opportunity_score DESC LIMIT 20;
 ```sql
 -- Example: Competitive state analysis
 SELECT state, partisan_lean, engagement_opportunity_score, total_registered_voters
-FROM mart_state_summary
+FROM prod_mart.state_summary
 WHERE partisan_lean IN ('Highly Competitive', 'Competitive')
 ORDER BY engagement_opportunity_score DESC;
 ```
@@ -158,7 +158,7 @@ END
 
 ### Adjust Opportunity Weights
 
-Modify scoring in `mart_targeting_opportunities.sql`:
+Modify scoring in `targeting_opportunities.sql`:
 
 ```sql
 -- Current: Recent (40%), Medium (30%), Tenure (20%), Size (10%)
