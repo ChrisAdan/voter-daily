@@ -1,0 +1,13 @@
+vote_dbt:
+  outputs:
+    prod:
+      type: duckdb
+      path: /usr/local/airflow/goodparty_prod.duckdb
+      schema: raw
+      threads: 1
+    dev:
+      type: duckdb
+      path: /usr/local/airflow/goodparty_dev.duckdb
+      schema: raw
+      threads: 1
+  target: prod

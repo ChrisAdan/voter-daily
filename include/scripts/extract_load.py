@@ -5,10 +5,10 @@ GoodParty Voter Analytics Pipeline - Extract & Load Module
 
 This module handles the extraction of voter data from CSV files and loading
 into DuckDB database with proper schema validation and deduplication.
+Refactored to maximize pandas usage.
 """
 
 import os
-import csv
 import uuid
 import duckdb
 import pandas as pd
@@ -26,14 +26,12 @@ class VoteDataProcessor:
         
         # Detect environment and set paths accordingly
         if self._is_airflow_container():
-            # Airflow container paths - use /tmp for writable locations
             self.project_root = Path("/usr/local/airflow")
             self.data_dir = self.project_root / "include" / "data"
             self.raw_data_path = self.data_dir / "raw"
-            self.db_path = Path('/tmp') / f"goodparty_{self.target}.duckdb"
-            self.last_run_file = Path('/tmp') / f".last_run_timestamp_{self.target}"
+            self.db_path = Path('/usr/local/airflow') / f"goodparty_{self.target}.duckdb"
+            self.last_run_file = Path('/usr/local/airflow') / f".last_run_timestamp_{self.target}"
         else:
-            # Local development paths
             self.project_root = Path(__file__).resolve().parents[2]
             self.data_dir = self.project_root / "include" / "data"
             self.raw_data_path = self.data_dir / "raw"
@@ -63,7 +61,6 @@ class VoteDataProcessor:
     
     def _is_airflow_container(self) -> bool:
         """Detect if running in Airflow container environment"""
-        # Check for Airflow-specific environment variables or paths
         airflow_indicators = [
             os.path.exists("/usr/local/airflow"),
             os.environ.get("AIRFLOW_HOME") is not None,
@@ -75,28 +72,27 @@ class VoteDataProcessor:
     def create_db(self, db_type: str = 'duckdb') -> bool:
         """Create database connection"""
         try:
-            if db_type.lower() == 'duckdb':
-                # Ensure /tmp is writable
-                os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-                self.connection = duckdb.connect(str(self.db_path))
-                print(f"✅ Connected to DuckDB: {self.db_path}")
-                return True
-            else:
+            if db_type.lower() != 'duckdb':
                 raise ValueError(f"Unsupported database type: {db_type}")
+            
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            self.connection = duckdb.connect(str(self.db_path))
+            print(f"Connected to DuckDB: {self.db_path}")
+            return True
         except Exception as e:
-            print(f"❌ Failed to create database connection: {e}")
+            print(f"Failed to create database connection: {e}")
             return False
     
-    def ensure_db(self, name: str = 'vote') -> bool:
+    def ensure_db(self) -> bool:
         """Ensure database schema and tables exist"""
         try:
             if not self.connection:
                 raise Exception("No database connection available")
             
-            # Create schema if it doesn't exist
-            self.db_command('create_schema', f"CREATE SCHEMA IF NOT EXISTS raw")
+            # Create raw schema
+            self.db_command('create_schema', "CREATE SCHEMA IF NOT EXISTS raw")
             
-            # Create vote_records table with proper schema
+            # Create vote_records table
             create_table_sql = """
             CREATE TABLE IF NOT EXISTS raw.vote_records (
                 record_uuid VARCHAR PRIMARY KEY,
@@ -116,10 +112,9 @@ class VoteDataProcessor:
                 updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             )
             """
-            
             self.db_command('create_table', create_table_sql)
             
-            # Create metadata table to track processing
+            # Create processing metadata table
             metadata_table_sql = """
             CREATE TABLE IF NOT EXISTS raw.processing_metadata (
                 id INTEGER PRIMARY KEY,
@@ -132,14 +127,13 @@ class VoteDataProcessor:
                 updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             )
             """
-            
             self.db_command('create_table', metadata_table_sql)
             
-            print(f"✅ Database schema '{name}' and tables ensured")
+            print("Database schema and tables initialized")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to ensure database: {e}")
+            print(f"Failed to ensure database: {e}")
             return False
     
     def db_command(self, action: str, query: str, connection: Optional[Any] = None) -> Any:
@@ -151,8 +145,6 @@ class VoteDataProcessor:
             
             if action.lower() in ['create_schema', 'create_table', 'insert', 'update', 'delete', 'truncate', 'drop']:
                 conn.execute(query)
-                if action.lower() in ['insert', 'update', 'delete']:
-                    print(f"✅ {action.upper()} executed successfully")
                 return True
                 
             elif action.lower() in ['read', 'select', 'query']:
@@ -167,20 +159,17 @@ class VoteDataProcessor:
                 raise ValueError(f"Unsupported action: {action}")
                 
         except Exception as e:
-            print(f"❌ Database command failed ({action}): {e}")
+            print(f"Database command failed ({action}): {e}")
             raise
     
     def get_latest_csv_files(self) -> List[Tuple[Path, datetime]]:
         """Get CSV files that need processing based on modification time"""
         try:
-            # Get last processing timestamp
             last_run_time = self.get_last_run_timestamp()
-            
             csv_files = []
             
-            # Find all CSV files in raw data directory
             if not self.raw_data_path.exists():
-                print(f"⚠️  Raw data directory not found: {self.raw_data_path}")
+                print(f"Raw data directory not found: {self.raw_data_path}")
                 print(f"Creating directory: {self.raw_data_path}")
                 os.makedirs(self.raw_data_path, exist_ok=True)
                 return csv_files
@@ -191,30 +180,28 @@ class VoteDataProcessor:
                         csv_file.stat().st_mtime, 
                         tz=timezone.utc
                     )
-                    # Include file if it's newer than last run or if this is first run
                     if last_run_time is None or file_mod_time > last_run_time:
                         csv_files.append((csv_file, file_mod_time))
-                        print(f"📄 Found file to process: {csv_file.name} (modified: {file_mod_time})")
+                        print(f"Found file to process: {csv_file.name} (modified: {file_mod_time})")
                 except OSError as e:
-                    print(f"⚠️  Could not access file {csv_file}: {e}")
+                    print(f"Could not access file {csv_file}: {e}")
                     continue
             
-            # Sort by modification time (oldest first)
             csv_files.sort(key=lambda x: x[1])
             
             if not csv_files:
-                print("ℹ️  No new CSV files to process")
+                print("No new CSV files to process")
             
             return csv_files
             
         except Exception as e:
-            print(f"❌ Error finding CSV files: {e}")
+            print(f"Error finding CSV files: {e}")
             return []
     
     def get_last_run_timestamp(self) -> Optional[datetime]:
         """Get the timestamp of the last successful run"""
         try:
-            # Try to get from database metadata table first
+            # Try database metadata table first
             if self.connection:
                 try:
                     result = self.db_command('read', 
@@ -226,7 +213,7 @@ class VoteDataProcessor:
                                 db_timestamp = db_timestamp.replace(tzinfo=timezone.utc)
                             return db_timestamp
                 except Exception as db_err:
-                    print(f"⚠️  Could not read from database metadata: {db_err}")
+                    print(f"Could not read from database metadata: {db_err}")
             
             # Fallback to file-based timestamp
             if self.last_run_file.exists():
@@ -238,12 +225,12 @@ class VoteDataProcessor:
                             file_timestamp = file_timestamp.replace(tzinfo=timezone.utc)
                         return file_timestamp
                 except Exception as file_err:
-                    print(f"⚠️  Could not parse timestamp file: {file_err}")
+                    print(f"Could not parse timestamp file: {file_err}")
             
             return None
             
         except Exception as e:
-            print(f"⚠️  Could not read last run timestamp: {e}")
+            print(f"Could not read last run timestamp: {e}")
             return None
     
     def update_last_run_timestamp(self, files_processed: int = 0, records_processed: int = 0, 
@@ -256,15 +243,13 @@ class VoteDataProcessor:
                 if timestamp.tzinfo is None:
                     timestamp = timestamp.replace(tzinfo=timezone.utc)
             
-            # Update in database using UPSERT pattern
+            # Update in database
             if self.connection:
                 try:
-                    # Check if metadata record exists
                     existing = self.db_command('read', 
                         "SELECT COUNT(*) FROM raw.processing_metadata WHERE id = 1")
                     
                     if existing and existing[0][0] > 0:
-                        # Update existing record
                         update_sql = f"""
                         UPDATE raw.processing_metadata 
                         SET last_processed_at = '{timestamp.isoformat()}',
@@ -277,7 +262,6 @@ class VoteDataProcessor:
                         """
                         self.db_command('update', update_sql)
                     else:
-                        # Insert new record
                         insert_sql = f"""
                         INSERT INTO raw.processing_metadata 
                         (id, last_processed_at, files_processed, records_processed, voter_count, state_count) 
@@ -286,95 +270,96 @@ class VoteDataProcessor:
                         self.db_command('insert', insert_sql)
                         
                 except Exception as e:
-                    print(f"⚠️  Could not update database timestamp: {e}")
+                    print(f"Could not update database timestamp: {e}")
             
             # Update file as backup
             try:
                 os.makedirs(os.path.dirname(self.last_run_file), exist_ok=True)
                 with open(self.last_run_file, 'w') as f:
                     f.write(timestamp.isoformat())
-                    print(f'✅ Updated timestamp file: {self.last_run_file}')
+                    print(f'Updated timestamp file: {self.last_run_file}')
             except Exception as e:
-                print(f"⚠️  Could not write timestamp file: {e}")
+                print(f"Could not write timestamp file: {e}")
                 
         except Exception as e:
-            print(f"⚠️  Could not update last run timestamp: {e}")
+            print(f"Could not update last run timestamp: {e}")
     
-    def generate_record_hash(self, record: Dict) -> str:
-        """Generate a hash for record deduplication"""
+    def generate_record_hash(self, record: pd.Series) -> str:
+        """Generate a hash for record deduplication using pandas Series"""
         key_fields = ['source_id', 'first_name', 'last_name', 'email']
-        hash_string = '|'.join(str(record.get(field, '')) for field in key_fields)
         
         def normalize(value):
-            if value is None:
+            if pd.isna(value):
                 return ''
             if isinstance(value, str):
                 return value.strip().lower()
             return str(value)
-            
-        hash_string = normalize(hash_string)
+        
+        hash_string = '|'.join(normalize(record.get(field, '')) for field in key_fields)
         return hashlib.md5(hash_string.encode()).hexdigest()
     
     def quick_error_check(self, file_path: Path, error_threshold: float = 0.05) -> Dict:
-        """Quickly check percentage of malformed rows to determine if file is processable."""
+        """Quickly check percentage of malformed rows using pandas"""
         try:
-            total_rows = 0
-            error_rows = 0
             expected_cols = len(self.csv_schema)
             
-            with open(file_path, 'r', newline='', encoding='utf-8') as f:
-                reader = csv.reader(f)
+            # Read a sample with pandas to check for issues
+            try:
+                # First, check the header - use usecols to handle trailing empty columns
+                header_df = pd.read_csv(file_path, nrows=0)
+                clean_header = [col.strip() for col in header_df.columns if col.strip()]
                 
-                # Skip header
-                try:
-                    header = next(reader)
-                    clean_header = [col.strip() for col in header if col.strip()]
-                    if len(clean_header) != expected_cols:
-                        print(f"Header has {len(clean_header)} columns, expected {expected_cols}")
-                except StopIteration:
-                    return {'can_process': False, 'error': 'Empty file'}
+                if len(clean_header) < expected_cols:
+                    print(f"Header has {len(clean_header)} columns, expected {expected_cols}")
+                    return {'can_process': False, 'error': f'Header column mismatch: {len(clean_header)} vs {expected_cols}'}
                 
-                # Sample first 1000 rows for quick assessment
+                if len(clean_header) > expected_cols:
+                    print(f"Warning: Header has {len(clean_header)} columns but expected {expected_cols}. Will use first {expected_cols} non-empty columns.")
+                
+                # Read sample rows to check error rate
                 sample_size = 1000
-                for i, row in enumerate(reader):
-                    if i >= sample_size:
-                        break
-                    
-                    # Skip completely empty rows
-                    if not any(field.strip() for field in row):
-                        continue
-                    
-                    total_rows += 1
-                    
-                    # Clean row to handle trailing commas/empty columns
-                    clean_row = [col.strip() for col in row if col.strip() or col == '']
-                    # Remove trailing empty columns
-                    while clean_row and clean_row[-1] == '':
-                        clean_row.pop()
-                    
-                    # Count as error if column count doesn't match after cleaning
-                    if len(clean_row) != expected_cols:
-                        error_rows += 1
-            
-            if total_rows == 0:
-                return {'can_process': False, 'error': 'No data rows found'}
-            
-            error_rate = error_rows / total_rows
-            can_process = error_rate <= error_threshold
-            
-            print(f"Quick scan: {error_rows}/{total_rows} malformed rows ({error_rate:.2%})")
-            if can_process:
-                print(f"Error rate {error_rate:.2%} is within threshold {error_threshold:.2%} - proceeding with pandas")
-            else:
-                print(f"Error rate {error_rate:.2%} exceeds threshold {error_threshold:.2%} - file rejected")
-            
-            return {
-                'can_process': can_process,
-                'error_rate': error_rate,
-                'total_sampled': total_rows,
-                'error_rows': error_rows,
-                'threshold': error_threshold
-            }
+                sample_df = pd.read_csv(
+                    file_path,
+                    nrows=sample_size,
+                    on_bad_lines='warn',
+                    encoding='utf-8',
+                    dtype=str
+                )
+                
+                if len(sample_df) == 0:
+                    return {'can_process': False, 'error': 'No data rows found'}
+                
+                # Check for rows with wrong number of columns by reading raw
+                total_rows = len(sample_df)
+                
+                # Estimate error rate based on null patterns
+                # If too many rows are entirely null, flag as error
+                null_rows = sample_df.isna().all(axis=1).sum()
+                partial_null = sample_df.isna().any(axis=1).sum() - null_rows
+                
+                error_rows = null_rows  # Only count completely null rows as errors
+                error_rate = error_rows / total_rows if total_rows > 0 else 0
+                
+                can_process = error_rate <= error_threshold
+                
+                print(f"Quick scan: {error_rows}/{total_rows} malformed rows ({error_rate:.2%})")
+                if can_process:
+                    print(f"Error rate {error_rate:.2%} is within threshold {error_threshold:.2%} - proceeding with pandas")
+                else:
+                    print(f"Error rate {error_rate:.2%} exceeds threshold {error_threshold:.2%} - file rejected")
+                
+                return {
+                    'can_process': can_process,
+                    'error_rate': error_rate,
+                    'total_sampled': total_rows,
+                    'error_rows': error_rows,
+                    'threshold': error_threshold
+                }
+                
+            except pd.errors.EmptyDataError:
+                return {'can_process': False, 'error': 'Empty file'}
+            except Exception as e:
+                return {'can_process': False, 'error': f'Read error: {str(e)}'}
             
         except Exception as e:
             return {'can_process': False, 'error': f"Failed to scan file: {str(e)}"}
@@ -385,7 +370,6 @@ class VoteDataProcessor:
             expected_columns = list(self.csv_schema.keys())
             actual_columns = list(df.columns)
             
-            # Check for missing columns
             missing_columns = set(expected_columns) - set(actual_columns)
             if missing_columns:
                 return {
@@ -395,12 +379,10 @@ class VoteDataProcessor:
                     'actual': actual_columns
                 }
             
-            # Check for extra columns (warn but don't fail)
             extra_columns = set(actual_columns) - set(expected_columns)
             if extra_columns:
                 print(f"Warning: Found extra columns that will be ignored: {extra_columns}")
             
-            # Validate data types can be converted
             validation_errors = []
             
             for col, expected_type in self.csv_schema.items():
@@ -449,16 +431,14 @@ class VoteDataProcessor:
             }
 
     def process_csv_file(self, file_path: Path, truncate_mode: bool = False) -> Dict:
-        """CSV processing with two-step approach"""
+        """CSV processing with pandas-first approach"""
         try:
             print(f"\nProcessing file: {file_path.name}")
             
-            # Step 1: Quick error rate check
             error_check = self.quick_error_check(file_path)
             if not error_check['can_process']:
                 raise ValueError(f"File rejected: {error_check.get('error', 'High error rate')}")
             
-            # Step 2: Read with pandas using error skipping
             print("Reading CSV with pandas (skipping bad lines)...")
             try:
                 df = pd.read_csv(
@@ -467,16 +447,16 @@ class VoteDataProcessor:
                         'id': 'string',  
                         'first_name': 'string',
                         'last_name': 'string', 
-                        'age': 'string',  # Convert to int later with error handling
+                        'age': 'string',
                         'gender': 'string',
                         'state': 'string',
                         'party': 'string',
                         'email': 'string',
-                        'registered_date': 'string',  # Parse dates later
+                        'registered_date': 'string',
                         'last_voted_date': 'string'
                     },
-                    on_bad_lines='skip',  # Skip malformed rows
-                    skipinitialspace=True,  # Handle extra whitespace
+                    on_bad_lines='skip',
+                    skipinitialspace=True,
                     encoding='utf-8'
                 )
                 
@@ -485,40 +465,33 @@ class VoteDataProcessor:
             except Exception as e:
                 raise ValueError(f"Pandas read failed: {str(e)}")
             
-            # Step 3: Validate schema
             schema_check = self.validate_schema(df)
             if not schema_check['valid']:
                 raise ValueError(f"Schema validation failed: {schema_check['error']}")
             
-            # Step 4: Clean and convert data types
             df = self.clean_and_convert_dataframe(df)
 
-            # Step 5: Continue with existing deduplication and insertion logic
-            # Read existing hashes if not in truncate mode
+            # Get existing hashes using pandas
             existing_hashes = set()
             if not truncate_mode:
                 try:
-                    hash_result = self.db_command('read', 
+                    existing_df = self.db_command('read_df', 
                         "SELECT record_hash FROM raw.vote_records WHERE record_hash IS NOT NULL")
-                    existing_hashes = {row[0] for row in hash_result}
-                    print(f"Found {len(existing_hashes)} existing record hashes")
+                    if len(existing_df) > 0:
+                        existing_hashes = set(existing_df['record_hash'].values)
+                        print(f"Found {len(existing_hashes)} existing record hashes")
                 except:
                     print("No existing records found")
             
-            # Add required columns
+            # Rename and add metadata columns
             df = df.rename(columns={'id': 'source_id'})
             df['source_file'] = file_path.name
             df['record_uuid'] = [str(uuid.uuid4()) for _ in range(len(df))]
             
-            # Generate hashes for deduplication
-            df['record_hash'] = df.apply(lambda row: self.generate_record_hash({
-                'source_id': row['source_id'],
-                'first_name': row['first_name'], 
-                'last_name': row['last_name'],
-                'email': row['email'],
-            }), axis=1)
+            # Generate hashes using pandas apply
+            df['record_hash'] = df.apply(self.generate_record_hash, axis=1)
             
-            # Filter duplicates if not in truncate mode
+            # Filter duplicates using pandas
             if not truncate_mode:
                 initial_count = len(df)
                 df = df[~df['record_hash'].isin(existing_hashes)]
@@ -536,7 +509,6 @@ class VoteDataProcessor:
                     'errors': 0
                 }
             
-            # Add timestamp columns
             current_time = datetime.now(timezone.utc)
             df['inserted_at'] = current_time
             df['updated_at'] = current_time
@@ -574,13 +546,14 @@ class VoteDataProcessor:
                 if date_col in df.columns:
                     df[date_col] = pd.to_datetime(df[date_col], errors='coerce').dt.date
             
-            # Clean string columns
+            # Clean string columns using pandas string methods
             string_cols = ['first_name', 'last_name', 'gender', 'state', 'party', 'email']
             for col in string_cols:
                 if col in df.columns:
-                    # Strip whitespace and convert empty strings to None
-                    df[col] = df[col].astype(str).str.strip()
-                    df[col] = df[col].replace(['', 'nan', 'None'], None)
+                    # Strip whitespace
+                    df[col] = df[col].str.strip()
+                    # Replace empty strings and common null representations with None
+                    df[col] = df[col].replace(['', 'nan', 'None', 'NaN', 'none'], None)
             
             print(f"Data cleaning completed: {len(df)} records")
             return df
@@ -595,10 +568,8 @@ class VoteDataProcessor:
             if len(df) == 0:
                 return
             
-            # Register DataFrame with DuckDB
             self.connection.register('batch_df', df)
             
-            # Insert using column order that matches the table
             insert_sql = """
             INSERT INTO raw.vote_records (
                 record_uuid, source_id, first_name, last_name, age, gender, 
@@ -616,24 +587,23 @@ class VoteDataProcessor:
             self.connection.unregister('batch_df')
             
         except Exception as e:
-            print(f"❌ Failed to insert batch: {e}")
+            print(f"Failed to insert batch: {e}")
             raise
 
     def get_data_quality_metrics(self) -> Dict:
-        """Get data quality metrics for metadata tracking"""
+        """Get data quality metrics using pandas for metadata tracking"""
         try:
             if not self.connection:
                 return {'voter_count': 0, 'state_count': 0}
             
-            # Get distinct voter count
-            voter_result = self.db_command('read', 
-                "SELECT COUNT(DISTINCT source_id) FROM raw.vote_records WHERE source_id IS NOT NULL")
-            voter_count = voter_result[0][0] if voter_result else 0
+            # Use read_df to get results as pandas DataFrame
+            voter_df = self.db_command('read_df', 
+                "SELECT COUNT(DISTINCT source_id) as count FROM raw.vote_records WHERE source_id IS NOT NULL")
+            voter_count = int(voter_df['count'].iloc[0]) if len(voter_df) > 0 else 0
             
-            # Get distinct state count  
-            state_result = self.db_command('read',
-                "SELECT COUNT(DISTINCT state) FROM raw.vote_records WHERE state IS NOT NULL")
-            state_count = state_result[0][0] if state_result else 0
+            state_df = self.db_command('read_df',
+                "SELECT COUNT(DISTINCT state) as count FROM raw.vote_records WHERE state IS NOT NULL")
+            state_count = int(state_df['count'].iloc[0]) if len(state_df) > 0 else 0
             
             return {
                 'voter_count': voter_count,
@@ -641,27 +611,24 @@ class VoteDataProcessor:
             }
             
         except Exception as e:
-            print(f"⚠️  Error getting data quality metrics: {e}")
+            print(f"Error getting data quality metrics: {e}")
             return {'voter_count': 0, 'state_count': 0}
 
-    def run_pipeline(self, target: Optional[str] = "dev", truncate_mode: bool = False, ) -> Dict:
+    def run_pipeline(self, target: Optional[str] = "dev", truncate_mode: bool = False) -> Dict:
         """Run the complete ETL pipeline"""
         start_time = datetime.now()
         
         try:
-            # Initialize database
             if not self.create_db():
                 return {'success': False, 'error': 'Failed to create database connection'}
             
             if not self.ensure_db():
                 return {'success': False, 'error': 'Failed to ensure database schema'}
             
-            # Truncate if requested
             if truncate_mode:
-                print("🗑️  Truncating existing data...")
+                print("Truncating existing data...")
                 self.db_command('truncate', "DELETE FROM raw.vote_records")
             
-            # Get files to process
             csv_files = self.get_latest_csv_files()
             
             if not csv_files:
@@ -672,7 +639,6 @@ class VoteDataProcessor:
                     'processing_time': str(datetime.now() - start_time)
                 }
             
-            # Process files
             total_processed = 0
             total_new = 0
             
@@ -684,23 +650,20 @@ class VoteDataProcessor:
                 else:
                     return {'success': False, 'error': result['error']}
             
-            # Get data quality metrics
             quality_metrics = self.get_data_quality_metrics()
             
-            # Update last run timestamp with actual processing stats
             self.update_last_run_timestamp(
                 files_processed=len(csv_files),
-                records_processed=total_new,  # Only count new records
+                records_processed=total_new,
                 voter_count=quality_metrics['voter_count'],
                 state_count=quality_metrics['state_count']
             )
             
             processing_time = datetime.now() - start_time
             
-            # Log final statistics
-            print(f"\n📈 Data Quality Metrics:")
-            print(f"   • Total unique voters: {quality_metrics['voter_count']}")
-            print(f"   • States represented: {quality_metrics['state_count']}")
+            print(f"\nData Quality Metrics:")
+            print(f"   Total unique voters: {quality_metrics['voter_count']}")
+            print(f"   States represented: {quality_metrics['state_count']}")
             
             return {
                 'success': True,
@@ -717,3 +680,21 @@ class VoteDataProcessor:
         finally:
             if self.connection:
                 self.connection.close()
+
+if __name__ == '__main__':
+    processor = VoteDataProcessor(target="prod")
+    result = processor.run_pipeline()
+
+    if result['success']:
+        print("ETL Pipeline completed successfully!")
+        print(f"Records processed: {result.get('records_processed', 0)}")
+        print(f"New records added: {result.get('new_records', 0)}")
+        print(f"Total unique voters: {result.get('voter_count', 0)}")
+        print(f"States represented: {result.get('state_count', 0)}")
+        print(f"Processing time: {result.get('processing_time', 'N/A')}")
+    
+    # CRITICAL: Explicitly close the database connection
+    # DuckDB only allows one writer at a time
+    if hasattr(processor, 'conn') and processor.conn:
+        processor.conn.close()
+        print("Database connection closed successfully")
