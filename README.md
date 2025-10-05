@@ -1,211 +1,171 @@
 # 🗳️ Voter Analytics Pipeline
 
-A comprehensive voter analytics platform built with **Apache Airflow**, **dbt**, **DuckDB**, and **Streamlit** for processing voter registration data and generating actionable insights for political campaigns and civic engagement.
+A production voter analytics platform built with **Apache Airflow**, **dbt**, **DuckDB**, and **Streamlit** demonstrating enterprise data engineering patterns: schema enforcement, data contracts, incremental processing, and orchestration best practices.
 
 ![Pipeline Architecture](https://img.shields.io/badge/Pipeline-ETL%20%2B%20ELT-blue) ![Database](https://img.shields.io/badge/Database-DuckDB-orange) ![Orchestration](https://img.shields.io/badge/Orchestration-Apache%20Airflow-red) ![Analytics](https://img.shields.io/badge/Analytics-dbt-green) ![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-purple)
 
-## 🏗️ What It Does
+## 🏗️ Architecture
 
-**Data Pipeline**: Processes CSV voter files → DuckDB analytics database → Interactive dashboards  
-**Key Analytics**: Voter engagement segmentation, targeting opportunities, demographic insights, geographic analysis  
-**Output**: Production-ready insights for voter outreach, campaign strategy, and civic engagement
+**Data Pipeline**: CSV voter files + election calendar → DuckDB → dbt transformations → Streamlit dashboards  
+**Key Features**: Voter engagement segmentation, targeting opportunities, demographic insights, geographic analysis, historic and upcoming election tracking
 
 ### Pipeline Flow
 
 ```
-CSV Files → Python ETL → DuckDB → dbt Transformations → Streamlit Dashboard
-    ↓           ↓         ↓            ↓                    ↓
-Raw Data → Validation → Storage → Analytics Tables → Interactive Viz
+CSV Files → Python ETL (Pandas) → DuckDB → dbt (Medallion) → Streamlit
+    ↓              ↓                  ↓          ↓                ↓
+Validation → Deduplication → Storage → Analytics → Interactive Viz
+
+Election Seeds (MIT + Google Civic) → dbt → Analytics Integration
 ```
 
-## 🚀 Two Ways to Use This Pipeline
+## 💼 Senior Data Engineering Highlights
 
-### Option 1: Full Airflow Pipeline (Recommended for Production)
+### Data Quality & Contracts
 
-**What you get**: Automated daily processing, monitoring, retry logic, web UI
+- **Enforced dbt Contracts**: All mart models use `contract: enforced: true` with explicit column types
+- **Strong Typing**: Explicit data types across all layers (pandas → DuckDB → dbt)
+- **Comprehensive Testing**: 15+ dbt tests using `dbt-expectations` package (range validation, regex, referential integrity)
+- **Schema Validation**: Runtime schema checks with detailed error handling
+- **Data Contracts**: Type-safe interfaces between pipeline stages
+
+### Orchestration & Reliability
+
+- **Airflow DAGs**: Three production DAGs with dependency management and retry logic
+- **Incremental Processing**: Timestamp-based change detection in ETL and dbt models
+- **Idempotency**: Safe re-runs with deduplication (MD5 hashing) and marker files
+- **Concurrency Control**: DuckDB single-writer constraint enforced via `max_active_tasks=1`
+- **Error Recovery**: Graceful handling of malformed data with configurable thresholds
+
+### Data Modeling Best Practices
+
+- **Medallion Architecture**: Raw → Dimension → Staging → Mart layers
+- **dbt Macros**: Reusable logic for election cycle calculations
+- **Cosmos Integration**: Seamless dbt execution within Airflow
+- **Incremental Models**: Optimized processing using `unique_key` and timestamp filters
+- **Seed Management**: Automated refresh of external data sources
+
+## 🚀 Quick Start
+
+### Production (Airflow)
 
 ```bash
-# Clone and start
 git clone https://github.com/ChrisAdan/voter-daily.git
 cd voter-daily
 astro dev start
 
-# Access interfaces
 # Airflow UI: http://localhost:8080 (admin/admin)
-# Streamlit Dashboard: http://localhost:8501
+# Streamlit: http://localhost:8501
+
+# First time: Trigger dbt_workspace_setup DAG
+# Then: voter_analytics_pipeline runs daily at 6 AM UTC
+# Monthly: election_calendar_seed_monthly refreshes calendar
 ```
 
-**Usage**:
-
-- Pipeline runs daily at 6 AM automatically
-- Manual trigger: Airflow UI → `voter_analytics_pipeline` → Trigger
-- Monitor: View logs and execution status in Airflow
-- Results: Dashboard updates after successful pipeline runs
-
-### Option 2: Local Development Mode
-
-**What you get**: Direct script execution, immediate results, development flexibility
+### Local Development
 
 ```bash
-# Clone and setup
-git clone https://github.com/ChrisAdan/voter-daily.git
 cd voter-daily/include
-
-# Install dependencies
 pip install -r requirements.txt
 
-# Run ETL pipeline
+# Generate election seeds, run ETL, transform with dbt
+python scripts/seed_elections.py
 python scripts/main.py
-
-# Run dbt transformations
-cd vote_dbt
-dbt deps && dbt build
-
-# View the dbt docs site
-dbt docs generate
-dbt docs serve
+cd vote_dbt && dbt deps && dbt seed && dbt build
 
 # Launch dashboard
 cd .. && streamlit run app.py
-# Dashboard: http://localhost:8501
-
 ```
 
-## 📊 What You'll See
+## 📊 Data Requirements
 
-### Dashboard Analytics
-
-- **Executive Summary**: Total voters, engagement rates, key trends
-- **Targeting Opportunities**: High-value segments for voter outreach
-- **Geographic Analysis**: State-level competitive landscape
-- **Demographics**: Age, gender, and partisan breakdowns
-- **Engagement Tracking**: Voter lifecycle and participation patterns
-
-### Key Insights Generated
-
-- **Voter Segmentation**: Current, Occasional, Dormant, Never Voted classifications
-- **Targeting Tiers**: High/Medium/Low priority segments based on engagement potential
-- **Geographic Hotspots**: Competitive states with high recovery opportunities
-- **Trend Analysis**: Participation changes across election cycles
-
-## 📋 Data Requirements
-
-### CSV Input Format
+### Voter CSV Format
 
 ```csv
 id,first_name,last_name,age,gender,state,party,email,registered_date,last_voted_date
 1,John,Smith,45,M,CA,Democrat,john.smith@email.com,2010-03-15,2020-11-03
 ```
 
-**Required Fields**: All 10 columns must be present  
-**Location**: Place CSV files in `include/data/raw/`  
-**Processing**: Automatic deduplication, schema validation, error handling
+**Location**: `include/data/raw/`  
+**Processing**: Schema validation, deduplication, incremental loading
 
-## 🎯 Key Features
+### Election Calendar
 
-### Data Processing
+- **Historic**: MIT Election Lab (1976-2020) with vote totals and winners
+- **Upcoming**: Google Civic API + calculated federal schedule (2021-2030)
+- **Refresh**: Monthly via automated DAG
 
-- ✅ **Schema Validation**: Automatic error detection and recovery
-- ✅ **Deduplication**: Hash-based duplicate prevention
-- ✅ **Incremental Loading**: Only processes new/modified files
-- ✅ **Error Handling**: Robust processing with detailed logging
-- ✅ **Audit Trail**: Complete data lineage and processing history
+## 🎯 Technical Features
 
-### Analytics Engine
+### Data Engineering
 
-- 📈 **Multi-Layer Architecture**: Raw → Dimensions → Staging → Marts
-- 🎯 **Engagement Scoring**: Sophisticated voter lifecycle analysis
-- 📊 **Cross-Tabulation**: Demographics vs. voting patterns
-- 🗺️ **Geographic Analysis**: State-level competitive insights
-- ⏱️ **Time Series**: Trends across election cycles
+- ✅ **Pandas-First ETL**: Efficient CSV processing with error handling
+- ✅ **Type Safety**: Explicit typing throughout pipeline (pandas dtypes → DuckDB → dbt contracts)
+- ✅ **Hash-Based Deduplication**: MD5 hashing on composite keys
+- ✅ **Incremental Patterns**: Both ETL and dbt layers support incremental processing
+- ✅ **Audit Trails**: Complete data lineage with inserted_at/updated_at timestamps
 
-### Dashboard & Visualization
+### Analytics Layer
 
-- 📱 **Interactive Streamlit UI**: Point-and-click analytics
-- 📈 **Real-time Charts**: Dynamic visualizations update with data
-- 🎛️ **Filtering Controls**: Drill down by state, demographics, engagement
-- 📊 **Multiple Views**: Executive summary, detailed breakdowns, trends
+- 📈 **4 Mart Tables**: voter_snapshot, partisan_trends, targeting_opportunities, state_summary
+- 🎯 **Engagement Scoring**: Composite 0-100 scale with weighted factors
+- 📊 **Time Series**: Participation trends across election cycles (2008-2024)
+- 🗺️ **Geographic Analysis**: State-level competitive landscape
+- 🗳️ **Election Integration**: Historic outcomes and upcoming calendar
 
-## 🔧 Technical Stack
+### Infrastructure
 
-- **Orchestration**: Apache Airflow (via Astronomer Runtime)
-- **Database**: DuckDB (high-performance analytics)
-- **Transformations**: dbt (data modeling and testing)
-- **Visualization**: Streamlit (interactive dashboards)
-- **Container**: Docker (consistent deployment environment)
-- **Language**: Python 3.11+
+- **Orchestration**: Astronomer Airflow with Cosmos for dbt integration
+- **Database**: DuckDB columnar storage optimized for analytics
+- **Transformations**: dbt with contracts, tests, and documentation
+- **Visualization**: Streamlit with Plotly for interactive dashboards
+- **Containerization**: Docker for consistent deployment
 
-## 🧪 Data Quality & Testing
+## 🧪 Data Quality
 
-- **Schema Validation**: Ensures CSV files match expected format
-- **dbt Tests**: 15+ data quality checks on transformed tables
-- **Range Validation**: Age (18-100), valid state codes, email formats
+- **dbt-expectations**: Advanced testing (regex, ranges, uniqueness)
+- **Contract Enforcement**: Type-safe interfaces on all mart models
 - **Referential Integrity**: Cross-table consistency checks
-- **Unit Tests**: Python test suite with pytest
+- **Range Validation**: Age (18-120), dates, percentages (0-100)
+- **Unit Tests**: pytest suite for ETL validation
 
-## 📈 Production Ready Features
+## 📈 Production Features
 
 ### Reliability
 
-- **Retry Logic**: Automatic retry on transient failures (2x with 5min delay)
-- **Error Recovery**: Graceful handling of malformed data
+- **Retry Logic**: 2 retries with 5-minute delays on transient failures
+- **Error Thresholds**: Configurable malformed data limits (5% default)
 - **Monitoring**: Comprehensive logging and execution tracking
-- **Concurrency Control**: Prevents overlapping pipeline runs
+- **Sequential Processing**: DAG-level task ordering for database consistency
 
 ### Performance
 
-- **Incremental Processing**: Only new/modified data processed
-- **Batch Processing**: Configurable batch sizes for large datasets
-- **Efficient Storage**: DuckDB columnar format optimized for analytics
-- **Resource Management**: Proper memory and compute allocation
+- **Incremental Loading**: Only new/modified records processed
+- **Batch Processing**: Configurable batch sizes (1000 rows default)
+- **Columnar Storage**: DuckDB optimization for analytics queries
+- **Connection Management**: Explicit connection closing for DuckDB single-writer constraint
 
-### Security & Compliance
+## 🔮 Key Insights
 
-- **Data Privacy**: Minimal PII storage with optional email hashing
-- **Access Control**: Role-based permissions in Airflow
-- **Audit Logging**: Complete data lineage and access tracking
-- **Retention Policies**: Configurable data retention management
-
-## 🚀 Quick Results
-
-**Setup Time**: ~5 minutes from clone to running dashboard  
-**Data Processing**: ~30 seconds for sample dataset (10 records)  
-**Dashboard Load**: ~10 seconds after pipeline completion  
-**Scale**: Tested with datasets up to 100K records
-
-## 🔮 What's Next
-
-### Immediate Use Cases
-
-- **Campaign Targeting**: Identify high-value voter segments for outreach
-- **Resource Allocation**: Focus efforts on competitive districts
-- **Trend Analysis**: Track engagement changes over election cycles
-- **Data-Driven Strategy**: Replace intuition with quantified insights
-
-### Future Enhancements
-
-- **Predictive Modeling**: Turnout prediction and voter likelihood scoring
-- **Real-time Processing**: Streaming data updates for live campaigns
-- **Advanced Segmentation**: ML-based voter classification
-- **API Integration**: RESTful endpoints for external tools
+- **Voter Segmentation**: 6 behavioral categories (Current → Never Voted)
+- **Targeting Tiers**: High/Medium/Low priority based on opportunity scoring
+- **Competitive States**: Partisan lean classification with engagement opportunities
+- **Historic Trends**: Participation rates across 9 election cycles
+- **Upcoming Calendar**: Federal elections through 2030
 
 ---
 
 ## 🏁 Ready to Start?
 
-Choose your path:
+**Production**: `astro dev start` → Trigger setup DAG → Monitor in Airflow UI  
+**Development**: `python scripts/seed_elections.py` → `python scripts/main.py` → `dbt build` → `streamlit run app.py`
 
-**🏢 Production Pipeline** → `astro dev start` → Access Airflow UI  
-**🛠️ Development Mode** → `python scripts/main.py` → Run Streamlit
-
-Both paths lead to the same powerful voter analytics insights. The choice depends on whether you want automated orchestration (Option 1) or direct control (Option 2).
-
-**Questions?** Check the detailed documentation in each component's README or examine the sample data in `include/data/raw/sample_voter_data.csv`.
+**Documentation**: Check `include/vote_dbt/README.md` for dbt details and `dags/README.md` for orchestration patterns.
 
 ---
 
 _Built for organizations working to strengthen democracy through data-driven voter engagement and civic participation._
 
 ```bash
-Note: This README was generated automatically using Cline.ai
+Note: This README was generated automatically using Claude.ai
 ```

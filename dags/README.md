@@ -106,4 +106,6 @@ streamlit run ../app.py
 
 ---
 
-_Note: This README was generated automatically using Claude.ai_
+```bash
+Note: This README was generated automatically using Claude.ai
+```
